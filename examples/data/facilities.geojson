@@ -1,0 +1,12 @@
+{
+"type": "FeatureCollection",
+"name": "facilities",
+"crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:OGC:1.3:CRS84" } },
+"features": [
+{ "type": "Feature", "properties": { "facility_id": "F001", "name": "惠民社区卫生服务站", "category": "clinic", "capacity": 80, "service_radius_m": 1000 }, "geometry": { "type": "Point", "coordinates": [ 121.439, 31.219 ] } },
+{ "type": "Feature", "properties": { "facility_id": "F002", "name": "晨光小学", "category": "school", "capacity": 600, "service_radius_m": 1000 }, "geometry": { "type": "Point", "coordinates": [ 121.441, 31.221 ] } },
+{ "type": "Feature", "properties": { "facility_id": "F003", "name": "城市阅读空间", "category": "library", "capacity": 120, "service_radius_m": 1000 }, "geometry": { "type": "Point", "coordinates": [ 121.46, 31.22 ] } },
+{ "type": "Feature", "properties": { "facility_id": "F004", "name": "邻里运动中心", "category": "sports_center", "capacity": 300, "service_radius_m": 1000 }, "geometry": { "type": "Point", "coordinates": [ 121.44, 31.24 ] } },
+{ "type": "Feature", "properties": { "facility_id": "F005", "name": "长青养老服务站", "category": "elderly_care", "capacity": 90, "service_radius_m": 1000 }, "geometry": { "type": "Point", "coordinates": [ 121.48, 31.25 ] } }
+]
+}
