@@ -18,7 +18,10 @@ GeoPilot 是一个自然语言驱动的地理空间分析 Agent。用户提供�
 - 缺失 CRS、缺失几何、空几何和无效几何验证
 - 结构化 Pydantic 输出与稳定错误代码
 - `geopilot inspect` 命令行接口
+- Provider-neutral Agent Loop、System Prompt、Tool Registry 与工作记忆
 - Ruff、Pyright 和 Pytest 质量检查
+
+完整组件规划与各阶段验收标准见 [GeoPilot 项目路线图](docs/PROJECT_ROADMAP.md)。
 
 ## 快速开始
 
@@ -87,6 +90,7 @@ PowerShell 可以通过 `$LASTEXITCODE` 查看退出码；Windows CMD 可以运�
 
 ```text
 src/geopilot/
+├── agent/                 # Prompt、模型接口、工具注册表与 Agent Loop
 ├── cli.py                 # 命令行适配层
 ├── models.py              # Pydantic 数据契约
 ├── tools/                 # 可独立测试的确定性 GIS 工具
