@@ -16,6 +16,15 @@ def inspect_vector_dataset(source: str | Path) -> DatasetProfile:
         raise FileNotFoundError(f"Dataset does not exist: {source_path}")
 
     frame = gpd.read_file(source_path)
+    return inspect_geodataframe(frame, source_path)
+
+
+def inspect_geodataframe(
+    frame: gpd.GeoDataFrame,
+    source: str | Path,
+) -> DatasetProfile:
+    """Return a validated summary of an in-memory geospatial dataset."""
+    source_path = Path(source).resolve()
 
     geometry = frame.geometry
     non_null_geometry = cast(

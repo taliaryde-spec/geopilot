@@ -4,11 +4,13 @@ import json
 from pathlib import Path
 
 import geopandas as gpd
+import pandas as pd
 import pytest
 from shapely.geometry import Point, Polygon
 
 from geopilot.cli import (
     EXIT_FILE_NOT_FOUND,
+    EXIT_INPUT_ERROR,
     EXIT_SUCCESS,
     EXIT_VALIDATION_ERROR,
     main,
@@ -68,6 +70,59 @@ def test_main_allows_dataset_with_validation_warning(
     assert exit_code == EXIT_SUCCESS
     assert payload["validation"]["can_proceed"] is True
     assert payload["validation"]["issues"][0]["severity"] == "warning"
+
+
+def test_main_inspects_csv_with_custom_coordinate_columns(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    dataset_path = tmp_path / "facilities.csv"
+    pd.DataFrame(
+        {
+            "name": ["Clinic A"],
+            "lon": [121.47],
+            "lat": [31.23],
+        }
+    ).to_csv(dataset_path, index=False)
+
+    exit_code = main(
+        [
+            "inspect",
+            str(dataset_path),
+            "--longitude-column",
+            "lon",
+            "--latitude-column",
+            "lat",
+        ]
+    )
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == EXIT_SUCCESS
+    assert payload["profile"]["geometry_types"] == {"Point": 1}
+    assert payload["profile"]["crs"] == "EPSG:4326"
+    assert payload["validation"]["can_proceed"] is True
+
+
+def test_main_reports_csv_coordinate_error(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    dataset_path = tmp_path / "invalid_coordinates.csv"
+    pd.DataFrame(
+        {
+            "longitude": [181.0],
+            "latitude": [31.23],
+        }
+    ).to_csv(dataset_path, index=False)
+
+    exit_code = main(["inspect", str(dataset_path)])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.err)
+
+    assert exit_code == EXIT_INPUT_ERROR
+    assert captured.out == ""
+    assert payload["error"]["code"] == "longitude_out_of_range"
 
 
 def test_main_reports_missing_dataset(

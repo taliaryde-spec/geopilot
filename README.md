@@ -13,6 +13,7 @@ GeoPilot 是一个自然语言驱动的地理空间分析 Agent。用户提供�
 ## 当前已实现
 
 - GeoJSON、Shapefile 等矢量数据读取
+- 带经纬度字段的 CSV 点图层转换
 - 字段、记录数、几何类型、CRS、范围和缺失值检查
 - 缺失 CRS、缺失几何、空几何和无效几何验证
 - 结构化 Pydantic 输出与稳定错误代码
@@ -39,6 +40,18 @@ uv run python scripts/generate_sample_data.py
 uv run geopilot inspect examples/data/facilities.geojson
 ```
 
+检查同一批设施的经纬度 CSV：
+
+```powershell
+uv run geopilot inspect examples/data/facilities.csv
+```
+
+默认坐标字段为 `longitude` 和 `latitude`。其他字段名可以显式指定：
+
+```powershell
+uv run geopilot inspect data/facilities.csv --longitude-column lon --latitude-column lat
+```
+
 检查居民区面数据：
 
 ```powershell
@@ -57,8 +70,18 @@ uv run geopilot inspect examples/data/neighborhoods.geojson
 - `2`：命令参数使用错误
 - `3`：输入文件不存在
 - `4`：数据验证发现阻断性错误
+- `5`：CSV 字段、坐标值或坐标范围无效
 
 PowerShell 可以通过 `$LASTEXITCODE` 查看退出码；Windows CMD 可以运行 `echo %ERRORLEVEL%`。
+
+## CSV 输入约定
+
+- 经度作为 X，范围必须为 `[-180, 180]`
+- 纬度作为 Y，范围必须为 `[-90, 90]`
+- 坐标不能为空、不能是非数值或无穷值
+- 转换后的点图层明确使用 `EPSG:4326`
+- 当前 MVP 不自动识别分隔符、文件编码、度分秒坐标或压缩 CSV
+- CSV 已有名为 `geometry` 的字段时会拒绝转换，避免覆盖原始信息
 
 ## 项目结构
 
@@ -87,7 +110,7 @@ uv run pytest -q
 
 - [x] 检查矢量数据并生成结构化摘要
 - [x] 在分析前验证 CRS、缺失值和几何质量
-- [ ] 读取带经纬度字段的 CSV 并转换为点图层
+- [x] 读取带经纬度字段的 CSV 并转换为点图层
 - [ ] 将自然语言问题转换为空间分析计划
 - [ ] 在执行前让用户确认分析计划
 - [ ] 执行米制投影、缓冲区和空间连接

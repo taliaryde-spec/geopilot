@@ -1,0 +1,6 @@
+facility_id,name,category,capacity,service_radius_m,longitude,latitude
+F001,惠民社区卫生服务站,clinic,80,1000,121.439,31.219
+F002,晨光小学,school,600,1000,121.441,31.221
+F003,城市阅读空间,library,120,1000,121.46,31.22
+F004,邻里运动中心,sports_center,300,1000,121.44,31.24
+F005,长青养老服务站,elderly_care,90,1000,121.48,31.25

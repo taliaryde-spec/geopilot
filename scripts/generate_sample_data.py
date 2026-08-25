@@ -65,14 +65,28 @@ def main() -> None:
     """Write all demo datasets to the examples directory."""
     SAMPLE_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
+    facilities = build_facilities()
+    neighborhoods = build_neighborhoods()
     datasets = {
-        "facilities.geojson": build_facilities(),
-        "neighborhoods.geojson": build_neighborhoods(),
+        "facilities.geojson": facilities,
+        "neighborhoods.geojson": neighborhoods,
     }
     for filename, frame in datasets.items():
         output_path = SAMPLE_DATA_DIR / filename
         frame.to_file(output_path, driver="GeoJSON", index=False)
         print(f"Generated {output_path.relative_to(PROJECT_ROOT)}")
+
+    csv_frame = facilities.drop(columns=facilities.geometry.name).copy()
+    csv_frame["longitude"] = facilities.geometry.x
+    csv_frame["latitude"] = facilities.geometry.y
+    csv_path = SAMPLE_DATA_DIR / "facilities.csv"
+    csv_frame.to_csv(
+        csv_path,
+        index=False,
+        encoding="utf-8",
+        lineterminator="\n",
+    )
+    print(f"Generated {csv_path.relative_to(PROJECT_ROOT)}")
 
 
 if __name__ == "__main__":

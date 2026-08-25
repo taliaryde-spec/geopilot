@@ -13,6 +13,7 @@ SAMPLE_DATA_DIR = Path(__file__).resolve().parents[1] / "examples" / "data"
     ("filename", "feature_count", "geometry_types"),
     [
         ("facilities.geojson", 5, {"Point": 5}),
+        ("facilities.csv", 5, {"Point": 5}),
         ("neighborhoods.geojson", 4, {"Polygon": 4}),
     ],
 )
