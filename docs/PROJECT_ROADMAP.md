@@ -33,7 +33,7 @@ Evaluation / Tracing / Storage / Deployment / MCP
 | 2 | 数据接入 | 已完成 | GeoJSON、Shapefile、CSV、CRS 与几何验证 |
 | 3 | Agent 核心 | 已完成 | Prompt、模型接口、Tool Registry、Agent Loop、工作记忆 |
 | 4 | 真实 LLM | 已完成 | OpenAI Responses、DeepSeek/OpenRouter Chat Completions、配置、错误边界与 DeepSeek Tool Calling 实测 |
-| 5 | 规划与审批 | 进行中 | 结构化计划、风险、文件检查点与批准/拒绝状态机已实现；等待 DeepSeek 实测 |
+| 5 | 规划与审批 | 已完成 | 结构化计划、语义护栏、文件检查点、批准/拒绝状态机及 DeepSeek 多轮纠错实测 |
 | 6 | GIS 执行工具 | 进行中 | 已完成确定性米制 CRS 推荐；待实现重投影、缓冲区、空间连接、结果验证与报告 |
 | 7 | RAG 与 Embedding | 待开始 | 文档加载、切块、向量化、检索、引用与离线评测 |
 | 8 | Memory | 待开始 | 会话状态、任务检查点、用户偏好、长期记忆边界 |
