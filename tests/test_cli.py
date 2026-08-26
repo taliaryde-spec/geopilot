@@ -8,7 +8,10 @@ import pandas as pd
 import pytest
 from shapely.geometry import Point, Polygon
 
+import geopilot.cli as cli_module
+from geopilot.agent.models import ModelResponse
 from geopilot.cli import (
+    EXIT_CONFIGURATION_ERROR,
     EXIT_FILE_NOT_FOUND,
     EXIT_INPUT_ERROR,
     EXIT_SUCCESS,
@@ -26,6 +29,48 @@ def test_main_without_command_prints_help(
 
     assert exit_code == EXIT_SUCCESS
     assert "inspect" in captured.out
+    assert "agent" in captured.out
+
+
+def test_main_reports_missing_model_configuration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GEOPILOT_PROVIDER", raising=False)
+    monkeypatch.delenv("GEOPILOT_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("GEOPILOT_MODEL", raising=False)
+
+    exit_code = main(["agent", "检查示例数据"])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.err)
+
+    assert exit_code == EXIT_CONFIGURATION_ERROR
+    assert captured.out == ""
+    assert payload["error"]["code"] == "model_configuration_error"
+
+
+def test_main_runs_agent_without_network(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class FakeModel:
+        def complete(self, messages: object, tools: object) -> ModelResponse:
+            return ModelResponse(content="Agent 已返回测试答案。")
+
+    monkeypatch.setenv("GEOPILOT_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("GEOPILOT_MODEL", "test-model")
+    monkeypatch.setattr(cli_module, "build_model", lambda settings: FakeModel())
+
+    exit_code = main(["agent", "检查示例数据"])
+    captured = capsys.readouterr()
+
+    assert exit_code == EXIT_SUCCESS
+    assert captured.out == "Agent 已返回测试答案。\n"
+    assert captured.err == ""
 
 
 def test_main_inspects_valid_dataset(

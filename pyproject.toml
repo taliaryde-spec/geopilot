@@ -6,8 +6,11 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "geopandas>=1.1.4",
+    "openai>=3.3.1",
     "pandas>=3.0.5",
     "pydantic>=2.13.4",
+    "python-dotenv>=1.2.3",
+    "socksio>=1.0.0",
 ]
 
 [dependency-groups]
@@ -25,3 +28,6 @@ geopilot = "geopilot.cli:main"
 [build-system]
 requires = ["uv_build>=0.10.10,<0.11.0"]
 build-backend = "uv_build"
+
+[tool.ruff]
+extend-exclude = [".npm-cache", ".storage-analysis"]
