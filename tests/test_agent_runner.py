@@ -172,6 +172,82 @@ def test_agent_submits_structured_plan_for_human_approval(
     assert "尚未执行" in result.final_answer
 
 
+def test_agent_can_correct_plan_after_semantic_validation_error(
+    tmp_path: Path,
+) -> None:
+    invalid_arguments = {
+        "user_goal": "统计设施与社区的空间关系",
+        "datasets": ["facilities", "neighborhoods"],
+        "steps": [
+            {
+                "step_id": 1,
+                "operation": "spatial_join",
+                "description": "连接设施与社区。",
+                "inputs": ["neighborhoods", "facilities"],
+                "parameters": {"join_type": "intersects"},
+                "expected_output": "空间连接结果",
+                "risk_level": "medium",
+            }
+        ],
+        "expected_outputs": ["空间连接结果"],
+        "risks": [],
+        "assumptions": [],
+    }
+    corrected_arguments = {
+        **invalid_arguments,
+        "steps": [
+            {
+                **invalid_arguments["steps"][0],
+                "parameters": {
+                    "how": "left",
+                    "predicate": "intersects",
+                    "left_suffix": "neighborhood",
+                    "right_suffix": "facility",
+                },
+            }
+        ],
+    }
+    model = ScriptedChatModel(
+        [
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="call-invalid-plan",
+                        name="submit_analysis_plan",
+                        arguments=invalid_arguments,
+                    )
+                ]
+            ),
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="call-corrected-plan",
+                        name="submit_analysis_plan",
+                        arguments=corrected_arguments,
+                    )
+                ]
+            ),
+            ModelResponse(content="修正后的计划已提交，等待人工审批。"),
+        ]
+    )
+    plan_store = PlanStore(
+        tmp_path,
+        id_factory=lambda: "plan_corrected",
+    )
+    runner = AgentRunner(
+        model,
+        build_default_tool_registry(plan_store=plan_store),
+    )
+
+    result = runner.run("统计设施与社区的空间关系")
+
+    assert result.tool_results[0].success is False
+    assert result.tool_results[0].error_code == "invalid_operation_parameters"
+    assert result.tool_results[1].success is True
+    assert plan_store.load("plan_corrected").status == "awaiting_approval"
+    assert result.model_turns == 3
+
+
 def test_agent_returns_unknown_tool_error_to_model() -> None:
     model = ScriptedChatModel(
         [

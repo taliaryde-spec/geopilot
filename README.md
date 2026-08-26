@@ -133,6 +133,15 @@ uv run geopilot reject plan_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx --reason "需要先
 
 批准只改变计划检查点的状态，不会提前执行空间分析。下一阶段的重投影、缓冲区和空间连接工具将使用 `plan_id` 检查授权状态。
 
+计划提交前还会经过代码级语义校验，而不只依赖 Prompt：
+
+- 覆盖面积必须按“米制缓冲区 → `union_all` 合并重叠 → 叠加求交 → 指标计算”的顺序规划
+- `spatial_join` 必须分别声明 `how`、`predicate` 和字段后缀，不能用含糊的 `join_type`
+- 覆盖率、覆盖人口及结果验证必须声明具体字段、计算假设和边界检查
+- 用于 Web 地图的 GeoJSON 必须输出为 `EPSG:4326`，米制 CRS 仅用于距离与面积计算
+
+语义校验失败时，错误会作为工具结果返回模型；Agent 可以修正计划并重新提交，但错误版本不会写入计划存储。
+
 命令会向标准输出写入 JSON，其中包含：
 
 - `profile`：数据事实，例如字段、CRS、范围和几何统计

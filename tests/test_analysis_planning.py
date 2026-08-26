@@ -42,7 +42,11 @@ def build_proposal() -> AnalysisPlanProposal:
                 operation=AnalysisOperation.BUFFER,
                 description="按服务半径生成设施缓冲区。",
                 inputs=["米制设施点图层"],
-                parameters={"distance_field": "service_radius_m"},
+                parameters={
+                    "distance_field": "service_radius_m",
+                    "unit": "metre",
+                    "crs": "EPSG:32651",
+                },
                 expected_output="设施服务范围图层",
                 risk_level=PlanRiskLevel.HIGH,
             ),

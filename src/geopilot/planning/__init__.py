@@ -13,6 +13,11 @@ from geopilot.planning.store import (
     PlanStoreError,
     PlanStoreErrorCode,
 )
+from geopilot.planning.validator import (
+    PlanSemanticError,
+    PlanSemanticErrorCode,
+    validate_analysis_plan,
+)
 
 __all__ = [
     "AnalysisOperation",
@@ -20,8 +25,11 @@ __all__ = [
     "AnalysisPlanProposal",
     "AnalysisPlanStep",
     "PlanRiskLevel",
+    "PlanSemanticError",
+    "PlanSemanticErrorCode",
     "PlanStatus",
     "PlanStore",
     "PlanStoreError",
     "PlanStoreErrorCode",
+    "validate_analysis_plan",
 ]

@@ -14,6 +14,7 @@ from geopilot.planning.models import (
     AnalysisPlanProposal,
     PlanStatus,
 )
+from geopilot.planning.validator import validate_analysis_plan
 
 
 class PlanStoreErrorCode(StrEnum):
@@ -56,6 +57,7 @@ class PlanStore:
 
     def create(self, proposal: AnalysisPlanProposal) -> AnalysisPlan:
         """Create and persist a plan that must wait for human approval."""
+        validate_analysis_plan(proposal)
         plan = AnalysisPlan(
             **proposal.model_dump(),
             plan_id=self._id_factory(),
