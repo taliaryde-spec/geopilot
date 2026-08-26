@@ -135,8 +135,10 @@ uv run geopilot reject plan_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx --reason "需要先
 
 计划提交前还会经过代码级语义校验，而不只依赖 Prompt：
 
+- 社区总面积必须在叠加求交前通过 `calculate_geometry_area` 以平方米计算，并保留明确的数据血缘
 - 覆盖面积必须按“米制缓冲区 → `union_all` 合并重叠 → 叠加求交 → 指标计算”的顺序规划
 - `spatial_join` 必须分别声明 `how`、`predicate` 和字段后缀，不能用含糊的 `join_type`
+- 覆盖指标与设施计数必须通过 `attribute_join` 按社区标识显式合并，验证步骤不能暗中承担数据连接
 - 覆盖率、覆盖人口及结果验证必须声明具体字段、计算假设和边界检查
 - 用于 Web 地图的 GeoJSON 必须输出为 `EPSG:4326`，米制 CRS 仅用于距离与面积计算
 

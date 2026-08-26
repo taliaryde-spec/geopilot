@@ -11,6 +11,8 @@ class PlanSemanticErrorCode(StrEnum):
 
     INVALID_OPERATION_PARAMETERS = "invalid_operation_parameters"
     INVALID_COVERAGE_SEQUENCE = "invalid_coverage_sequence"
+    MISSING_AREA_LINEAGE = "missing_area_lineage"
+    MISSING_RESULT_JOIN = "missing_result_join"
 
 
 class PlanSemanticError(ValueError):
@@ -43,6 +45,29 @@ def _validate_reproject(parameters: dict[str, Any]) -> None:
         parameters,
         "target_crs",
         operation=AnalysisOperation.REPROJECT,
+    )
+
+
+def _validate_geometry_area(parameters: dict[str, Any]) -> None:
+    _require_parameter(
+        parameters,
+        "output_field",
+        operation=AnalysisOperation.CALCULATE_GEOMETRY_AREA,
+    )
+    unit = _require_parameter(
+        parameters,
+        "unit",
+        operation=AnalysisOperation.CALCULATE_GEOMETRY_AREA,
+    )
+    if unit != "square_metre":
+        raise PlanSemanticError(
+            PlanSemanticErrorCode.INVALID_OPERATION_PARAMETERS,
+            "Operation 'calculate_geometry_area' requires unit='square_metre'.",
+        )
+    _require_parameter(
+        parameters,
+        "crs",
+        operation=AnalysisOperation.CALCULATE_GEOMETRY_AREA,
     )
 
 
@@ -152,6 +177,26 @@ def _validate_coverage_metrics(parameters: dict[str, Any]) -> None:
         )
 
 
+def _validate_attribute_join(parameters: dict[str, Any]) -> None:
+    issues: list[str] = []
+    how = parameters.get("how")
+    if how != "left":
+        issues.append("Operation 'attribute_join' requires how='left'.")
+    for name in (
+        "left_key",
+        "right_key",
+        "left_suffix",
+        "right_suffix",
+    ):
+        if not parameters.get(name):
+            issues.append(f"Operation 'attribute_join' requires parameter {name!r}.")
+    if issues:
+        raise PlanSemanticError(
+            PlanSemanticErrorCode.INVALID_OPERATION_PARAMETERS,
+            " ".join(issues),
+        )
+
+
 def _validate_result(parameters: dict[str, Any]) -> None:
     checks = _require_parameter(
         parameters,
@@ -164,6 +209,29 @@ def _validate_result(parameters: dict[str, Any]) -> None:
         raise PlanSemanticError(
             PlanSemanticErrorCode.INVALID_OPERATION_PARAMETERS,
             "Operation 'validate_result' checks must be a non-empty list of names.",
+        )
+    required_checks = {
+        "valid_geometry",
+        "no_null_metrics",
+        "coverage_ratio_between_0_and_1",
+        "covered_population_not_above_population",
+    }
+    provided_checks = set(checks)
+    missing_checks = required_checks - provided_checks
+    unsupported_checks = provided_checks - required_checks
+    issues: list[str] = []
+    if missing_checks:
+        issues.append(
+            "Missing required result checks: " + ", ".join(sorted(missing_checks)) + "."
+        )
+    if unsupported_checks:
+        issues.append(
+            "Unsupported result checks: " + ", ".join(sorted(unsupported_checks)) + "."
+        )
+    if issues:
+        raise PlanSemanticError(
+            PlanSemanticErrorCode.INVALID_OPERATION_PARAMETERS,
+            " ".join(issues),
         )
 
 
@@ -183,11 +251,13 @@ def _validate_export_geojson(parameters: dict[str, Any]) -> None:
 
 _OPERATION_VALIDATORS = {
     AnalysisOperation.REPROJECT: _validate_reproject,
+    AnalysisOperation.CALCULATE_GEOMETRY_AREA: _validate_geometry_area,
     AnalysisOperation.BUFFER: _validate_buffer,
     AnalysisOperation.DISSOLVE: _validate_dissolve,
     AnalysisOperation.OVERLAY_INTERSECTION: _validate_overlay,
     AnalysisOperation.SPATIAL_JOIN: _validate_spatial_join,
     AnalysisOperation.CALCULATE_COVERAGE_METRICS: _validate_coverage_metrics,
+    AnalysisOperation.ATTRIBUTE_JOIN: _validate_attribute_join,
     AnalysisOperation.VALIDATE_RESULT: _validate_result,
     AnalysisOperation.EXPORT_GEOJSON: _validate_export_geojson,
 }
@@ -196,10 +266,13 @@ _EXPECTED_INPUT_COUNTS = {
     AnalysisOperation.INSPECT_DATASET: 1,
     AnalysisOperation.RECOMMEND_METRIC_CRS: 1,
     AnalysisOperation.REPROJECT: 1,
+    AnalysisOperation.CALCULATE_GEOMETRY_AREA: 1,
     AnalysisOperation.BUFFER: 1,
     AnalysisOperation.DISSOLVE: 1,
     AnalysisOperation.OVERLAY_INTERSECTION: 2,
     AnalysisOperation.SPATIAL_JOIN: 2,
+    AnalysisOperation.ATTRIBUTE_JOIN: 2,
+    AnalysisOperation.VALIDATE_RESULT: 1,
     AnalysisOperation.EXPORT_GEOJSON: 1,
 }
 
@@ -244,6 +317,71 @@ def _validate_coverage_sequence(proposal: AnalysisPlanProposal) -> None:
         search_from = position + 1
 
 
+def _validate_coverage_area_lineage(proposal: AnalysisPlanProposal) -> None:
+    """Require the denominator area field to exist before overlay clipping."""
+    for metric_index, metric_step in enumerate(proposal.steps):
+        if metric_step.operation is not AnalysisOperation.CALCULATE_COVERAGE_METRICS:
+            continue
+
+        total_area_field = metric_step.parameters.get("total_area_field")
+        overlay_positions = [
+            index
+            for index, step in enumerate(proposal.steps[:metric_index])
+            if step.operation is AnalysisOperation.OVERLAY_INTERSECTION
+        ]
+        if not overlay_positions:
+            continue
+        overlay_index = overlay_positions[-1]
+        has_matching_area_step = any(
+            step.operation is AnalysisOperation.CALCULATE_GEOMETRY_AREA
+            and step.parameters.get("output_field") == total_area_field
+            for step in proposal.steps[:overlay_index]
+        )
+        if not has_matching_area_step:
+            raise PlanSemanticError(
+                PlanSemanticErrorCode.MISSING_AREA_LINEAGE,
+                "Coverage total_area_field must be created by a "
+                "calculate_geometry_area step before overlay_intersection, "
+                "using the same output_field name.",
+            )
+
+
+def _validate_coverage_result_join(proposal: AnalysisPlanProposal) -> None:
+    """Require metric and facility-count outputs to be explicitly combined."""
+    operations = [step.operation for step in proposal.steps]
+    if (
+        AnalysisOperation.CALCULATE_COVERAGE_METRICS not in operations
+        or AnalysisOperation.SPATIAL_JOIN not in operations
+    ):
+        return
+
+    metrics_index = operations.index(AnalysisOperation.CALCULATE_COVERAGE_METRICS)
+    spatial_join_index = operations.index(AnalysisOperation.SPATIAL_JOIN)
+    search_from = max(metrics_index, spatial_join_index) + 1
+    try:
+        result_join_index = operations.index(
+            AnalysisOperation.ATTRIBUTE_JOIN,
+            search_from,
+        )
+    except ValueError as error:
+        raise PlanSemanticError(
+            PlanSemanticErrorCode.MISSING_RESULT_JOIN,
+            "Coverage metrics and spatial-join counts must be combined by an "
+            "attribute_join step before validation or export.",
+        ) from error
+
+    later_validation_positions = [
+        index
+        for index, operation in enumerate(operations)
+        if operation is AnalysisOperation.VALIDATE_RESULT
+    ]
+    if later_validation_positions and result_join_index > later_validation_positions[0]:
+        raise PlanSemanticError(
+            PlanSemanticErrorCode.MISSING_RESULT_JOIN,
+            "attribute_join must occur before validate_result.",
+        )
+
+
 def validate_analysis_plan(
     proposal: AnalysisPlanProposal,
 ) -> AnalysisPlanProposal:
@@ -262,6 +400,14 @@ def validate_analysis_plan(
                 errors.append((step.step_id, error))
     try:
         _validate_coverage_sequence(proposal)
+    except PlanSemanticError as error:
+        errors.append((None, error))
+    try:
+        _validate_coverage_area_lineage(proposal)
+    except PlanSemanticError as error:
+        errors.append((None, error))
+    try:
+        _validate_coverage_result_join(proposal)
     except PlanSemanticError as error:
         errors.append((None, error))
 

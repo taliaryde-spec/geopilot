@@ -107,6 +107,47 @@ def test_plan_rejects_coverage_metrics_without_dissolved_buffers() -> None:
     assert "buffer, dissolve, overlay_intersection" in str(error_info.value)
 
 
+def test_plan_rejects_coverage_total_area_without_pre_overlay_lineage() -> None:
+    proposal = build_proposal(
+        [
+            build_step(
+                1,
+                AnalysisOperation.BUFFER,
+                ["projected_facilities"],
+                {
+                    "distance_field": "service_radius_m",
+                    "unit": "metre",
+                    "crs": "EPSG:32651",
+                },
+            ),
+            build_step(
+                2,
+                AnalysisOperation.DISSOLVE,
+                ["facility_buffers"],
+                {"method": "union_all"},
+            ),
+            build_step(
+                3,
+                AnalysisOperation.OVERLAY_INTERSECTION,
+                ["projected_neighborhoods", "dissolved_buffers"],
+                {"how": "intersection"},
+            ),
+            build_step(
+                4,
+                AnalysisOperation.CALCULATE_COVERAGE_METRICS,
+                ["coverage_intersections"],
+                coverage_metric_parameters(),
+            ),
+        ]
+    )
+
+    with pytest.raises(PlanSemanticError) as error_info:
+        validate_analysis_plan(proposal)
+
+    assert error_info.value.code is PlanSemanticErrorCode.MISSING_AREA_LINEAGE
+    assert "before overlay_intersection" in str(error_info.value)
+
+
 def test_plan_rejects_projected_geojson_output() -> None:
     proposal = build_proposal(
         [
@@ -185,11 +226,48 @@ def test_plan_rejects_multiple_inputs_for_single_dataset_tool() -> None:
         validate_analysis_plan(proposal)
 
 
-def test_plan_accepts_safe_area_coverage_sequence() -> None:
+def test_plan_rejects_noncanonical_result_check_names() -> None:
     proposal = build_proposal(
         [
             build_step(
                 1,
+                AnalysisOperation.VALIDATE_RESULT,
+                ["coverage_result"],
+                {
+                    "checks": [
+                        "valid_geometry",
+                        "null_metrics",
+                        "coverage_ratio_in_0_1",
+                        "covered_population_not_exceeding_total",
+                    ]
+                },
+            )
+        ]
+    )
+
+    with pytest.raises(PlanSemanticError) as error_info:
+        validate_analysis_plan(proposal)
+
+    message = str(error_info.value)
+    assert "Missing required result checks" in message
+    assert "Unsupported result checks" in message
+
+
+def test_plan_rejects_unmerged_metrics_and_facility_counts() -> None:
+    proposal = build_proposal(
+        [
+            build_step(
+                1,
+                AnalysisOperation.CALCULATE_GEOMETRY_AREA,
+                ["projected_neighborhoods"],
+                {
+                    "output_field": "neighborhood_area_m2",
+                    "unit": "square_metre",
+                    "crs": "EPSG:32651",
+                },
+            ),
+            build_step(
+                2,
                 AnalysisOperation.BUFFER,
                 ["projected_facilities"],
                 {
@@ -199,27 +277,112 @@ def test_plan_accepts_safe_area_coverage_sequence() -> None:
                 },
             ),
             build_step(
-                2,
+                3,
                 AnalysisOperation.DISSOLVE,
                 ["facility_buffers"],
                 {"method": "union_all"},
             ),
             build_step(
-                3,
+                4,
                 AnalysisOperation.OVERLAY_INTERSECTION,
                 ["projected_neighborhoods", "dissolved_buffers"],
                 {"how": "intersection"},
             ),
             build_step(
-                4,
+                5,
                 AnalysisOperation.CALCULATE_COVERAGE_METRICS,
                 ["coverage_intersections"],
                 coverage_metric_parameters(),
             ),
             build_step(
+                6,
+                AnalysisOperation.SPATIAL_JOIN,
+                ["projected_neighborhoods", "projected_facilities"],
+                {
+                    "how": "left",
+                    "predicate": "intersects",
+                    "left_suffix": "neighborhood",
+                    "right_suffix": "facility",
+                },
+            ),
+        ]
+    )
+
+    with pytest.raises(PlanSemanticError) as error_info:
+        validate_analysis_plan(proposal)
+
+    assert error_info.value.code is PlanSemanticErrorCode.MISSING_RESULT_JOIN
+    assert "attribute_join" in str(error_info.value)
+
+
+def test_plan_accepts_safe_area_coverage_sequence() -> None:
+    proposal = build_proposal(
+        [
+            build_step(
+                1,
+                AnalysisOperation.CALCULATE_GEOMETRY_AREA,
+                ["projected_neighborhoods"],
+                {
+                    "output_field": "neighborhood_area_m2",
+                    "unit": "square_metre",
+                    "crs": "EPSG:32651",
+                },
+            ),
+            build_step(
+                2,
+                AnalysisOperation.BUFFER,
+                ["projected_facilities"],
+                {
+                    "distance_field": "service_radius_m",
+                    "unit": "metre",
+                    "crs": "EPSG:32651",
+                },
+            ),
+            build_step(
+                3,
+                AnalysisOperation.DISSOLVE,
+                ["facility_buffers"],
+                {"method": "union_all"},
+            ),
+            build_step(
+                4,
+                AnalysisOperation.OVERLAY_INTERSECTION,
+                ["projected_neighborhoods", "dissolved_buffers"],
+                {"how": "intersection"},
+            ),
+            build_step(
                 5,
+                AnalysisOperation.CALCULATE_COVERAGE_METRICS,
+                ["coverage_intersections"],
+                coverage_metric_parameters(),
+            ),
+            build_step(
+                6,
+                AnalysisOperation.SPATIAL_JOIN,
+                ["projected_neighborhoods", "projected_facilities"],
+                {
+                    "how": "left",
+                    "predicate": "intersects",
+                    "left_suffix": "neighborhood",
+                    "right_suffix": "facility",
+                },
+            ),
+            build_step(
+                7,
+                AnalysisOperation.ATTRIBUTE_JOIN,
+                ["coverage_metrics", "facility_counts"],
+                {
+                    "how": "left",
+                    "left_key": "neighborhood_id",
+                    "right_key": "neighborhood_id",
+                    "left_suffix": "coverage",
+                    "right_suffix": "facility_count",
+                },
+            ),
+            build_step(
+                8,
                 AnalysisOperation.VALIDATE_RESULT,
-                ["coverage_metrics"],
+                ["combined_coverage_result"],
                 {
                     "checks": [
                         "valid_geometry",
@@ -230,7 +393,7 @@ def test_plan_accepts_safe_area_coverage_sequence() -> None:
                 },
             ),
             build_step(
-                6,
+                9,
                 AnalysisOperation.EXPORT_GEOJSON,
                 ["validated_coverage_metrics"],
                 {"output_crs": "EPSG:4326"},
