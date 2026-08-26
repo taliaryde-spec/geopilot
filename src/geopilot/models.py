@@ -131,3 +131,43 @@ class GeometryAreaResult(BaseModel):
     minimum_area_m2: float = Field(ge=0)
     maximum_area_m2: float = Field(ge=0)
     total_area_m2: float = Field(ge=0)
+
+
+class BufferResult(BaseModel):
+    """Metadata for field-driven metric buffer geometries."""
+
+    source: str
+    output: str
+    feature_count: int = Field(ge=0)
+    geometry_types: dict[str, int]
+    crs: str
+    distance_field: str
+    minimum_distance_m: float = Field(gt=0)
+    maximum_distance_m: float = Field(gt=0)
+    quadrant_segments: int = Field(ge=1)
+
+
+class DissolveResult(BaseModel):
+    """Metadata for a unioned polygon coverage artifact."""
+
+    source: str
+    output: str
+    input_feature_count: int = Field(ge=1)
+    feature_count: int = Field(ge=1)
+    geometry_types: dict[str, int]
+    crs: str
+    method: str
+
+
+class OverlayIntersectionResult(BaseModel):
+    """Metadata for a persisted polygon intersection artifact."""
+
+    left_source: str
+    right_source: str
+    output: str
+    left_feature_count: int = Field(ge=1)
+    right_feature_count: int = Field(ge=1)
+    feature_count: int = Field(ge=0)
+    geometry_types: dict[str, int]
+    crs: str
+    how: str
