@@ -9,6 +9,7 @@ import pytest
 from shapely.geometry import Point, Polygon
 
 import geopilot.cli as cli_module
+from geopilot.agent.config import ModelSettings
 from geopilot.agent.models import ModelResponse
 from geopilot.cli import (
     EXIT_CONFIGURATION_ERROR,
@@ -93,12 +94,19 @@ def test_main_runs_agent_without_network(
     monkeypatch.setenv("GEOPILOT_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("GEOPILOT_MODEL", "test-model")
-    monkeypatch.setattr(cli_module, "build_model", lambda settings: FakeModel())
+    captured_max_tokens: list[int] = []
 
-    exit_code = main(["agent", "检查示例数据"])
+    def build_fake_model(settings: ModelSettings) -> FakeModel:
+        captured_max_tokens.append(settings.max_output_tokens)
+        return FakeModel()
+
+    monkeypatch.setattr(cli_module, "build_model", build_fake_model)
+
+    exit_code = main(["agent", "检查示例数据", "--max-output-tokens", "5000"])
     captured = capsys.readouterr()
 
     assert exit_code == EXIT_SUCCESS
+    assert captured_max_tokens == [5000]
     assert captured.out == "Agent 已返回测试答案。\n"
     assert captured.err == ""
 

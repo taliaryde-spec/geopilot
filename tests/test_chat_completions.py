@@ -24,6 +24,7 @@ class FakeMessage:
 @dataclass
 class FakeChoice:
     message: FakeMessage
+    finish_reason: str = "stop"
 
 
 @dataclass
@@ -69,6 +70,8 @@ def _settings(
 
 def _response_with_tool_call(
     arguments: str = '{"source":"data.geojson"}',
+    *,
+    finish_reason: str = "tool_calls",
 ) -> FakeChatCompletion:
     return FakeChatCompletion(
         choices=[
@@ -85,7 +88,8 @@ def _response_with_tool_call(
                             ),
                         )
                     ],
-                )
+                ),
+                finish_reason=finish_reason,
             )
         ]
     )
@@ -177,5 +181,26 @@ def test_adapter_rejects_invalid_tool_arguments() -> None:
     client = FakeClient([_response_with_tool_call("not-json")])
     model = OpenAICompatibleChatModel(_settings(), client=client)
 
-    with pytest.raises(ModelResponseError, match="invalid JSON"):
+    with pytest.raises(
+        ModelResponseError,
+        match=r"invalid JSON arguments at line 1, column 1.*8 characters",
+    ):
         model.complete([AgentMessage(role="user", content="Inspect data")], [])
+
+
+def test_adapter_reports_truncated_tool_arguments() -> None:
+    client = FakeClient(
+        [
+            _response_with_tool_call(
+                '{"user_goal":"unfinished',
+                finish_reason="length",
+            )
+        ]
+    )
+    model = OpenAICompatibleChatModel(_settings(), client=client)
+
+    with pytest.raises(
+        ModelResponseError,
+        match=r"max_tokens=4096.*may be truncated",
+    ):
+        model.complete([AgentMessage(role="user", content="Create a plan")], [])

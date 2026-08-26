@@ -90,6 +90,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=6,
         help="Maximum model turns before the Agent stops (default: 6).",
     )
+    agent_parser.add_argument(
+        "--max-output-tokens",
+        type=int,
+        default=None,
+        help=(
+            "Override GEOPILOT_MODEL_MAX_OUTPUT_TOKENS for this run (default: 4096)."
+        ),
+    )
 
     show_plan_parser = subparsers.add_parser(
         "show-plan",
@@ -186,6 +194,7 @@ def _run_agent(
     model: str | None,
     base_url: str | None,
     max_turns: int,
+    max_output_tokens: int | None,
 ) -> int:
     """Run the real-model Agent command and print its final answer."""
     try:
@@ -193,6 +202,7 @@ def _run_agent(
             provider=provider,
             model=model,
             base_url=base_url,
+            max_output_tokens=max_output_tokens,
         )
         runner = AgentRunner(
             build_model(settings),
@@ -274,6 +284,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             model=arguments.model,
             base_url=arguments.base_url,
             max_turns=arguments.max_turns,
+            max_output_tokens=arguments.max_output_tokens,
         )
     if arguments.command == "show-plan":
         return _run_show_plan(arguments.plan_id, arguments.plans_dir)

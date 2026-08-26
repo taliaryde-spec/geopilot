@@ -133,7 +133,26 @@ class OpenAICompatibleChatModel:
 
         if not response.choices:
             raise ModelResponseError("The model provider returned no choices.")
-        message = response.choices[0].message
+        choice = response.choices[0]
+        if choice.finish_reason == "length":
+            raise ModelResponseError(
+                f"{self._settings.provider.value} stopped after reaching "
+                f"max_tokens={self._settings.max_output_tokens}; the response "
+                "or tool arguments may be truncated. Increase "
+                "GEOPILOT_MODEL_MAX_OUTPUT_TOKENS or use "
+                "--max-output-tokens, then retry."
+            )
+        if choice.finish_reason == "content_filter":
+            raise ModelResponseError(
+                "The model provider stopped because of its content filter."
+            )
+        if choice.finish_reason == "insufficient_system_resource":
+            raise ModelResponseError(
+                "The model provider stopped because inference resources were "
+                "temporarily insufficient. Retry the request."
+            )
+
+        message = choice.message
         tool_calls = [
             _normalize_tool_call(tool_call)
             for tool_call in message.tool_calls or []
@@ -214,7 +233,9 @@ def _normalize_tool_call(
         arguments = json.loads(tool_call.function.arguments)
     except json.JSONDecodeError as error:
         raise ModelResponseError(
-            f"Tool {tool_call.function.name!r} returned invalid JSON arguments."
+            f"Tool {tool_call.function.name!r} returned invalid JSON arguments "
+            f"at line {error.lineno}, column {error.colno} "
+            f"(argument length: {len(tool_call.function.arguments)} characters)."
         ) from error
     if not isinstance(arguments, dict):
         raise ModelResponseError(

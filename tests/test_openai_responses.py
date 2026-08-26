@@ -1,6 +1,7 @@
 """Tests for configuration and OpenAI Responses API translation."""
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -116,6 +117,7 @@ def test_settings_apply_deepseek_defaults(
         "GEOPILOT_BASE_URL",
         "DEEPSEEK_API_KEY",
         "DEEPSEEK_MODEL",
+        "GEOPILOT_MODEL_MAX_OUTPUT_TOKENS",
     ):
         monkeypatch.delenv(variable, raising=False)
 
@@ -124,6 +126,36 @@ def test_settings_apply_deepseek_defaults(
     assert settings.provider == ModelProvider.DEEPSEEK
     assert settings.model == "deepseek-v4-flash"
     assert settings.base_url == "https://api.deepseek.com"
+    assert settings.max_output_tokens == 4096
+    assert os.getenv("DEEPSEEK_API_KEY") is None
+    assert os.getenv("GEOPILOT_MODEL_MAX_OUTPUT_TOKENS") is None
+
+
+def test_settings_allow_cli_output_token_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "GEOPILOT_PROVIDER=deepseek\n"
+        "DEEPSEEK_API_KEY=secret-value\n"
+        "GEOPILOT_MODEL_MAX_OUTPUT_TOKENS=1200\n",
+        encoding="utf-8",
+    )
+    for variable in (
+        "GEOPILOT_PROVIDER",
+        "GEOPILOT_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "GEOPILOT_MODEL_MAX_OUTPUT_TOKENS",
+    ):
+        monkeypatch.delenv(variable, raising=False)
+
+    settings = ModelSettings.from_environment(
+        env_file=env_file,
+        max_output_tokens=4096,
+    )
+
+    assert settings.max_output_tokens == 4096
 
 
 def test_settings_require_openrouter_model(

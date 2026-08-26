@@ -91,7 +91,13 @@ OPENROUTER_MODEL=provider/model-name
 uv run geopilot agent "请检查 examples/data/facilities.csv，并说明数据是否可以继续分析"
 ```
 
-Agent 会把 `inspect_dataset` 的 JSON Schema 发给模型。模型选择工具后，本地代码执行检查，再把结构化结果返回模型生成最终回答。切换供应商只改变模型适配层，不改变 Agent Loop 或 GIS 工具。SDK 重试次数、超时和最大输出 token 可在 `.env` 中配置。
+Agent 会把 `inspect_dataset` 的 JSON Schema 发给模型。模型选择工具后，本地代码执行检查，再把结构化结果返回模型生成最终回答。切换供应商只改变模型适配层，不改变 Agent Loop 或 GIS 工具。SDK 重试次数、超时和最大输出 token 可在 `.env` 中配置。复杂计划默认允许 4096 个输出 token，也可以单次覆盖：
+
+```powershell
+uv run geopilot agent "你的任务" --max-output-tokens 4096
+```
+
+当供应商返回 `finish_reason=length` 时，GeoPilot 会明确报告响应可能被截断，不会把残缺的工具参数交给 GIS 工具执行。
 
 请求距离、缓冲区或面积分析时，Agent 必须调用 `recommend_metric_crs`，不能自行猜测 UTM 分区或 EPSG 编号：
 

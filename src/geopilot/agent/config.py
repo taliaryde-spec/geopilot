@@ -4,7 +4,7 @@ import os
 from enum import StrEnum
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 from pydantic import BaseModel, Field, SecretStr
 
 
@@ -48,7 +48,7 @@ class ModelSettings(BaseModel):
     base_url: str | None = None
     timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     max_retries: int = Field(default=2, ge=0, le=5)
-    max_output_tokens: int = Field(default=1200, ge=64, le=20_000)
+    max_output_tokens: int = Field(default=4096, ge=64, le=20_000)
 
     @classmethod
     def from_environment(
@@ -57,14 +57,23 @@ class ModelSettings(BaseModel):
         provider: str | ModelProvider | None = None,
         model: str | None = None,
         base_url: str | None = None,
+        max_output_tokens: int | None = None,
         env_file: Path | None = None,
     ) -> "ModelSettings":
-        """Load a local .env file, then validate environment variables."""
+        """Read a local .env file without mutating the process environment."""
         dotenv_path = env_file if env_file is not None else Path.cwd() / ".env"
-        load_dotenv(dotenv_path=dotenv_path, override=False)
+        file_values = dotenv_values(dotenv_path=dotenv_path)
+
+        def config_value(name: str, default: str | None = None) -> str | None:
+            """Return an environment override, then .env value, then default."""
+            environment_value = os.getenv(name)
+            if environment_value is not None:
+                return environment_value
+            file_value = file_values.get(name)
+            return file_value if file_value is not None else default
 
         provider_name = str(
-            provider or os.getenv("GEOPILOT_PROVIDER", ModelProvider.OPENAI)
+            provider or config_value("GEOPILOT_PROVIDER", ModelProvider.OPENAI.value)
         ).lower()
         try:
             selected_provider = ModelProvider(provider_name)
@@ -75,21 +84,20 @@ class ModelSettings(BaseModel):
             ) from error
 
         provider_key_variable = _PROVIDER_KEY_VARIABLES[selected_provider]
-        api_key = (
-            os.getenv("GEOPILOT_API_KEY", "").strip()
-            or os.getenv(provider_key_variable, "").strip()
-        )
+        api_key = (config_value("GEOPILOT_API_KEY", "") or "").strip() or (
+            config_value(provider_key_variable, "") or ""
+        ).strip()
         provider_model_variable = f"{selected_provider.value.upper()}_MODEL"
         model_name = (
             model
-            or os.getenv("GEOPILOT_MODEL", "")
-            or os.getenv(provider_model_variable, "")
+            or config_value("GEOPILOT_MODEL", "")
+            or config_value(provider_model_variable, "")
             or _PROVIDER_DEFAULT_MODELS[selected_provider]
             or ""
         ).strip()
         configured_base_url = (
             base_url
-            or os.getenv("GEOPILOT_BASE_URL")
+            or config_value("GEOPILOT_BASE_URL")
             or _PROVIDER_BASE_URLS[selected_provider]
         )
         if configured_base_url is not None:
@@ -114,12 +122,21 @@ class ModelSettings(BaseModel):
                     "api_key": api_key,
                     "model": model_name,
                     "base_url": configured_base_url,
-                    "timeout_seconds": os.getenv(
-                        "GEOPILOT_MODEL_TIMEOUT_SECONDS", "30"
+                    "timeout_seconds": config_value(
+                        "GEOPILOT_MODEL_TIMEOUT_SECONDS",
+                        "30",
                     ),
-                    "max_retries": os.getenv("GEOPILOT_MODEL_MAX_RETRIES", "2"),
-                    "max_output_tokens": os.getenv(
-                        "GEOPILOT_MODEL_MAX_OUTPUT_TOKENS", "1200"
+                    "max_retries": config_value(
+                        "GEOPILOT_MODEL_MAX_RETRIES",
+                        "2",
+                    ),
+                    "max_output_tokens": (
+                        max_output_tokens
+                        if max_output_tokens is not None
+                        else config_value(
+                            "GEOPILOT_MODEL_MAX_OUTPUT_TOKENS",
+                            "4096",
+                        )
                     ),
                 }
             )
