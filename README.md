@@ -147,6 +147,17 @@ uv run geopilot reject plan_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx --reason "需要先
 
 如果 Agent 达到最大模型轮数，CLI 会返回一个有界工具轨迹：只包含工具名、成功状态和错误代码，不输出完整 Prompt、API Key 或大型工具结果。这用于定位模型是否在重复检查、反复提交错误计划或遇到工具故障。
 
+## 确定性 GIS 执行工具
+
+已实现的第一批执行工具位于 `src/geopilot/tools/vector_operations.py`：
+
+- `reproject_vector_dataset`：把 CSV 点或矢量数据安全重投影到米制投影 CRS
+- `calculate_polygon_area`：只在米制投影面图层上计算平方米面积
+
+中间产物统一写为 GeoPackage（`.gpkg`），以保留 CRS、几何和字段类型。工具默认拒绝覆盖已有文件，并通过临时文件完成后再原子替换，降低中途失败留下残缺结果的风险。它们不会注册到普通对话 Agent，而是由后续的 `ApprovedPlanExecutor` 在确认计划状态为 `approved` 后调用。
+
+这两个工具分别对应当前覆盖分析计划的“重投影”和“求交前计算社区总面积”步骤。缓冲区、合并、求交和指标计算将在同一执行层继续实现。
+
 命令会向标准输出写入 JSON，其中包含：
 
 - `profile`：数据事实，例如字段、CRS、范围和几何统计

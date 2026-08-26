@@ -9,6 +9,7 @@ dependencies = [
     "openai>=3.3.1",
     "pandas>=3.0.5",
     "pydantic>=2.13.4",
+    "pyproj>=3.7.2",
     "python-dotenv>=1.2.3",
     "socksio>=1.0.0",
 ]

@@ -106,3 +106,28 @@ class MetricCrsRecommendation(BaseModel):
     )
     method: MetricCrsRecommendationMethod
     warnings: list[str] = Field(default_factory=list)
+
+
+class ReprojectionResult(BaseModel):
+    """Metadata for one persisted, reprojected vector dataset."""
+
+    source: str
+    output: str
+    feature_count: int = Field(ge=0)
+    geometry_types: dict[str, int]
+    source_crs: str
+    target_crs: str
+
+
+class GeometryAreaResult(BaseModel):
+    """Metadata and summary statistics for a persisted area calculation."""
+
+    source: str
+    output: str
+    feature_count: int = Field(ge=0)
+    geometry_types: dict[str, int]
+    crs: str
+    output_field: str
+    minimum_area_m2: float = Field(ge=0)
+    maximum_area_m2: float = Field(ge=0)
+    total_area_m2: float = Field(ge=0)
