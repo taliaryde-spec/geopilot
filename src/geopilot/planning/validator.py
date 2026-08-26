@@ -12,6 +12,7 @@ class PlanSemanticErrorCode(StrEnum):
     INVALID_OPERATION_PARAMETERS = "invalid_operation_parameters"
     INVALID_COVERAGE_SEQUENCE = "invalid_coverage_sequence"
     MISSING_AREA_LINEAGE = "missing_area_lineage"
+    MISSING_UNCOVERED_RESTORE = "missing_uncovered_restore"
     MISSING_RESULT_JOIN = "missing_result_join"
 
 
@@ -197,6 +198,25 @@ def _validate_attribute_join(parameters: dict[str, Any]) -> None:
         )
 
 
+def _validate_restore_uncovered(parameters: dict[str, Any]) -> None:
+    issues: list[str] = []
+    if not parameters.get("key"):
+        issues.append(
+            "Operation 'restore_uncovered_features' requires parameter 'key'."
+        )
+    fill_defaults = parameters.get("fill_defaults")
+    if not isinstance(fill_defaults, dict) or not fill_defaults:
+        issues.append(
+            "Operation 'restore_uncovered_features' requires a non-empty "
+            "'fill_defaults' object."
+        )
+    if issues:
+        raise PlanSemanticError(
+            PlanSemanticErrorCode.INVALID_OPERATION_PARAMETERS,
+            " ".join(issues),
+        )
+
+
 def _validate_result(parameters: dict[str, Any]) -> None:
     checks = _require_parameter(
         parameters,
@@ -257,6 +277,7 @@ _OPERATION_VALIDATORS = {
     AnalysisOperation.OVERLAY_INTERSECTION: _validate_overlay,
     AnalysisOperation.SPATIAL_JOIN: _validate_spatial_join,
     AnalysisOperation.CALCULATE_COVERAGE_METRICS: _validate_coverage_metrics,
+    AnalysisOperation.RESTORE_UNCOVERED_FEATURES: _validate_restore_uncovered,
     AnalysisOperation.ATTRIBUTE_JOIN: _validate_attribute_join,
     AnalysisOperation.VALIDATE_RESULT: _validate_result,
     AnalysisOperation.EXPORT_GEOJSON: _validate_export_geojson,
@@ -271,6 +292,7 @@ _EXPECTED_INPUT_COUNTS = {
     AnalysisOperation.DISSOLVE: 1,
     AnalysisOperation.OVERLAY_INTERSECTION: 2,
     AnalysisOperation.SPATIAL_JOIN: 2,
+    AnalysisOperation.RESTORE_UNCOVERED_FEATURES: 2,
     AnalysisOperation.ATTRIBUTE_JOIN: 2,
     AnalysisOperation.VALIDATE_RESULT: 1,
     AnalysisOperation.EXPORT_GEOJSON: 1,
@@ -346,6 +368,60 @@ def _validate_coverage_area_lineage(proposal: AnalysisPlanProposal) -> None:
             )
 
 
+def _validate_uncovered_feature_restore(proposal: AnalysisPlanProposal) -> None:
+    """Keep completely uncovered target polygons in the final result."""
+    operations = [step.operation for step in proposal.steps]
+    if AnalysisOperation.OVERLAY_INTERSECTION not in operations:
+        return
+    overlay_index = operations.index(AnalysisOperation.OVERLAY_INTERSECTION)
+    complete_target_input = proposal.steps[overlay_index].inputs[0]
+    for metrics_index, metrics_step in enumerate(proposal.steps):
+        if metrics_step.operation is not AnalysisOperation.CALCULATE_COVERAGE_METRICS:
+            continue
+
+        restore_positions = [
+            index
+            for index, operation in enumerate(operations)
+            if operation is AnalysisOperation.RESTORE_UNCOVERED_FEATURES
+            and index > metrics_index
+        ]
+        if not restore_positions:
+            raise PlanSemanticError(
+                PlanSemanticErrorCode.MISSING_UNCOVERED_RESTORE,
+                "Coverage metrics must be left-joined back to the complete "
+                "target polygons with restore_uncovered_features so zero-coverage "
+                "features are retained.",
+            )
+
+        restore_step = proposal.steps[restore_positions[0]]
+        if restore_step.inputs[0] != complete_target_input:
+            raise PlanSemanticError(
+                PlanSemanticErrorCode.MISSING_UNCOVERED_RESTORE,
+                "restore_uncovered_features must use the complete target polygon "
+                f"input {complete_target_input!r} as its left input.",
+            )
+        required_zero_fields = {
+            metrics_step.parameters.get("intersection_area_field"),
+            metrics_step.parameters.get("coverage_ratio_field"),
+            metrics_step.parameters.get("estimated_covered_population_field"),
+        }
+        required_zero_fields.discard(None)
+        fill_defaults = restore_step.parameters.get("fill_defaults")
+        if not isinstance(fill_defaults, dict):
+            continue
+        missing_or_nonzero = sorted(
+            str(field)
+            for field in required_zero_fields
+            if field not in fill_defaults or fill_defaults[field] != 0
+        )
+        if missing_or_nonzero:
+            raise PlanSemanticError(
+                PlanSemanticErrorCode.MISSING_UNCOVERED_RESTORE,
+                "restore_uncovered_features fill_defaults must set these "
+                "coverage fields to 0: " + ", ".join(missing_or_nonzero) + ".",
+            )
+
+
 def _validate_coverage_result_join(proposal: AnalysisPlanProposal) -> None:
     """Require metric and facility-count outputs to be explicitly combined."""
     operations = [step.operation for step in proposal.steps]
@@ -357,7 +433,14 @@ def _validate_coverage_result_join(proposal: AnalysisPlanProposal) -> None:
 
     metrics_index = operations.index(AnalysisOperation.CALCULATE_COVERAGE_METRICS)
     spatial_join_index = operations.index(AnalysisOperation.SPATIAL_JOIN)
-    search_from = max(metrics_index, spatial_join_index) + 1
+    restore_positions = [
+        index
+        for index, operation in enumerate(operations)
+        if operation is AnalysisOperation.RESTORE_UNCOVERED_FEATURES
+        and index > metrics_index
+    ]
+    restore_index = restore_positions[0] if restore_positions else metrics_index
+    search_from = max(restore_index, spatial_join_index) + 1
     try:
         result_join_index = operations.index(
             AnalysisOperation.ATTRIBUTE_JOIN,
@@ -404,6 +487,10 @@ def validate_analysis_plan(
         errors.append((None, error))
     try:
         _validate_coverage_area_lineage(proposal)
+    except PlanSemanticError as error:
+        errors.append((None, error))
+    try:
+        _validate_uncovered_feature_restore(proposal)
     except PlanSemanticError as error:
         errors.append((None, error))
     try:

@@ -19,6 +19,7 @@ class AnalysisOperation(StrEnum):
     OVERLAY_INTERSECTION = "overlay_intersection"
     SPATIAL_JOIN = "spatial_join"
     CALCULATE_COVERAGE_METRICS = "calculate_coverage_metrics"
+    RESTORE_UNCOVERED_FEATURES = "restore_uncovered_features"
     ATTRIBUTE_JOIN = "attribute_join"
     VALIDATE_RESULT = "validate_result"
     EXPORT_GEOJSON = "export_geojson"

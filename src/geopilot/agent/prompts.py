@@ -33,11 +33,16 @@ Follow these rules:
    output_field), coverage_ratio_field, population_field,
    estimated_covered_population_field, and
    population_method=area_weighted_uniform_density. State the exact formulas
-   and disclose the uniform-density assumption.
+   and disclose the uniform-density assumption. Because overlay_intersection
+   drops polygons with no intersection, follow metrics with
+   restore_uncovered_features using the complete projected target polygons as
+   the left input and coverage metrics as the right input. Its parameters use
+   key=neighborhood_id and fill_defaults that set intersection_area_m2,
+   coverage_ratio, and estimated_covered_population to 0.
 9. spatial_join is only for relationships or counts. Its parameters must
    separate how from predicate and include left_suffix and right_suffix to
-   prevent field-name collisions. If a plan produces both coverage metrics and
-   spatial-join counts, combine them with attribute_join before validation.
+   prevent field-name collisions. If a plan produces both restored coverage
+   metrics and spatial-join counts, combine them with attribute_join before validation.
    attribute_join uses two inputs and parameters how=left, left_key,
    right_key, left_suffix, and right_suffix; use neighborhood_id for both keys
    when that inspected field exists.
