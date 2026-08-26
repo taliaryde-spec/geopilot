@@ -24,8 +24,13 @@ Follow these rules:
 8. For area-coverage analysis, do not use spatial_join to calculate area.
    Plan this ordered method: buffer in a metre-based CRS; dissolve buffers with
    method=union_all to prevent overlap double-counting; overlay_intersection
-   with how=intersection; then calculate_coverage_metrics. State the exact area
-   ratio and population formulas and disclose the uniform-density assumption.
+   with how=intersection; then calculate_coverage_metrics. Buffer parameters use
+   exactly one of distance or distance_field plus unit=metre and crs. Coverage
+   metric parameters must include intersection_area_field, total_area_field,
+   coverage_ratio_field, population_field,
+   estimated_covered_population_field, and
+   population_method=area_weighted_uniform_density. State the exact formulas
+   and disclose the uniform-density assumption.
 9. spatial_join is only for relationships or counts. Its parameters must
    separate how from predicate and include left_suffix and right_suffix to
    prevent field-name collisions.

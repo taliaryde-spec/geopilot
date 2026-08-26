@@ -123,6 +123,52 @@ def test_plan_rejects_projected_geojson_output() -> None:
         validate_analysis_plan(proposal)
 
 
+def test_plan_reports_multiple_semantic_errors_in_one_response() -> None:
+    proposal = build_proposal(
+        [
+            build_step(
+                1,
+                AnalysisOperation.BUFFER,
+                ["projected_facilities"],
+                {},
+            ),
+            build_step(
+                2,
+                AnalysisOperation.DISSOLVE,
+                ["facility_buffers"],
+                {"method": "union_all"},
+            ),
+            build_step(
+                3,
+                AnalysisOperation.OVERLAY_INTERSECTION,
+                ["projected_neighborhoods", "dissolved_buffers"],
+                {"how": "intersection"},
+            ),
+            build_step(
+                4,
+                AnalysisOperation.CALCULATE_COVERAGE_METRICS,
+                ["coverage_intersections"],
+                {},
+            ),
+        ]
+    )
+
+    with pytest.raises(PlanSemanticError) as error_info:
+        validate_analysis_plan(proposal)
+
+    message = str(error_info.value)
+    assert "Step 1" in message
+    assert "distance_field" in message
+    assert "unit" in message
+    assert "crs" in message
+    assert "Step 4" in message
+    assert "intersection_area_field" in message
+    assert "total_area_field" in message
+    assert "coverage_ratio_field" in message
+    assert "estimated_covered_population_field" in message
+    assert "population_method" in message
+
+
 def test_plan_rejects_multiple_inputs_for_single_dataset_tool() -> None:
     proposal = build_proposal(
         [

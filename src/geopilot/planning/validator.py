@@ -47,29 +47,25 @@ def _validate_reproject(parameters: dict[str, Any]) -> None:
 
 
 def _validate_buffer(parameters: dict[str, Any]) -> None:
+    issues: list[str] = []
     has_distance = parameters.get("distance") is not None
     has_distance_field = bool(parameters.get("distance_field"))
     if has_distance == has_distance_field:
+        issues.append(
+            "Operation 'buffer' requires exactly one of 'distance' or 'distance_field'."
+        )
+    unit = parameters.get("unit")
+    if unit is None or unit == "":
+        issues.append("Operation 'buffer' requires parameter 'unit'.")
+    elif unit != "metre":
+        issues.append("Operation 'buffer' requires unit='metre'.")
+    if not parameters.get("crs"):
+        issues.append("Operation 'buffer' requires parameter 'crs'.")
+    if issues:
         raise PlanSemanticError(
             PlanSemanticErrorCode.INVALID_OPERATION_PARAMETERS,
-            "Operation 'buffer' requires exactly one of 'distance' or "
-            "'distance_field'.",
+            " ".join(issues),
         )
-    unit = _require_parameter(
-        parameters,
-        "unit",
-        operation=AnalysisOperation.BUFFER,
-    )
-    if unit != "metre":
-        raise PlanSemanticError(
-            PlanSemanticErrorCode.INVALID_OPERATION_PARAMETERS,
-            "Operation 'buffer' requires unit='metre'.",
-        )
-    _require_parameter(
-        parameters,
-        "crs",
-        operation=AnalysisOperation.BUFFER,
-    )
 
 
 def _validate_dissolve(parameters: dict[str, Any]) -> None:
@@ -100,37 +96,25 @@ def _validate_overlay(parameters: dict[str, Any]) -> None:
 
 
 def _validate_spatial_join(parameters: dict[str, Any]) -> None:
+    issues: list[str] = []
     if "join_type" in parameters:
-        raise PlanSemanticError(
-            PlanSemanticErrorCode.INVALID_OPERATION_PARAMETERS,
+        issues.append(
             "Operation 'spatial_join' must separate 'how' from 'predicate'; "
-            "do not use the ambiguous parameter 'join_type'.",
+            "do not use the ambiguous parameter 'join_type'."
         )
-    how = _require_parameter(
-        parameters,
-        "how",
-        operation=AnalysisOperation.SPATIAL_JOIN,
-    )
-    if how not in {"left", "inner", "right"}:
+    how = parameters.get("how")
+    if how is None or how == "":
+        issues.append("Operation 'spatial_join' requires parameter 'how'.")
+    elif how not in {"left", "inner", "right"}:
+        issues.append("Operation 'spatial_join' how must be left, inner, or right.")
+    for name in ("predicate", "left_suffix", "right_suffix"):
+        if not parameters.get(name):
+            issues.append(f"Operation 'spatial_join' requires parameter {name!r}.")
+    if issues:
         raise PlanSemanticError(
             PlanSemanticErrorCode.INVALID_OPERATION_PARAMETERS,
-            "Operation 'spatial_join' how must be left, inner, or right.",
+            " ".join(issues),
         )
-    _require_parameter(
-        parameters,
-        "predicate",
-        operation=AnalysisOperation.SPATIAL_JOIN,
-    )
-    _require_parameter(
-        parameters,
-        "left_suffix",
-        operation=AnalysisOperation.SPATIAL_JOIN,
-    )
-    _require_parameter(
-        parameters,
-        "right_suffix",
-        operation=AnalysisOperation.SPATIAL_JOIN,
-    )
 
 
 def _validate_coverage_metrics(parameters: dict[str, Any]) -> None:
@@ -142,17 +126,29 @@ def _validate_coverage_metrics(parameters: dict[str, Any]) -> None:
         "estimated_covered_population_field",
         "population_method",
     )
-    for name in required_parameters:
-        _require_parameter(
-            parameters,
-            name,
-            operation=AnalysisOperation.CALCULATE_COVERAGE_METRICS,
+    missing_parameters = [
+        name for name in required_parameters if not parameters.get(name)
+    ]
+    issues = []
+    if missing_parameters:
+        joined_names = ", ".join(repr(name) for name in missing_parameters)
+        issues.append(
+            "Operation 'calculate_coverage_metrics' requires parameters: "
+            f"{joined_names}."
         )
-    if parameters["population_method"] != "area_weighted_uniform_density":
+    population_method = parameters.get("population_method")
+    if (
+        population_method is not None
+        and population_method != "area_weighted_uniform_density"
+    ):
+        issues.append(
+            "Coverage population estimation must explicitly use "
+            "population_method='area_weighted_uniform_density'."
+        )
+    if issues:
         raise PlanSemanticError(
             PlanSemanticErrorCode.INVALID_OPERATION_PARAMETERS,
-            "Coverage population estimation must explicitly use "
-            "population_method='area_weighted_uniform_density'.",
+            " ".join(issues),
         )
 
 
@@ -252,10 +248,31 @@ def validate_analysis_plan(
     proposal: AnalysisPlanProposal,
 ) -> AnalysisPlanProposal:
     """Reject unsafe operation parameters and incomplete coverage methods."""
+    errors: list[tuple[int | None, PlanSemanticError]] = []
     for step in proposal.steps:
-        _validate_input_count(step.operation, step.inputs)
+        try:
+            _validate_input_count(step.operation, step.inputs)
+        except PlanSemanticError as error:
+            errors.append((step.step_id, error))
         validator = _OPERATION_VALIDATORS.get(step.operation)
         if validator is not None:
-            validator(step.parameters)
-    _validate_coverage_sequence(proposal)
+            try:
+                validator(step.parameters)
+            except PlanSemanticError as error:
+                errors.append((step.step_id, error))
+    try:
+        _validate_coverage_sequence(proposal)
+    except PlanSemanticError as error:
+        errors.append((None, error))
+
+    if errors:
+        first_error = errors[0][1]
+        details = "\n".join(
+            f"- {'Plan' if step_id is None else f'Step {step_id}'}: {error}"
+            for step_id, error in errors
+        )
+        raise PlanSemanticError(
+            first_error.code,
+            f"Plan semantic validation failed:\n{details}",
+        )
     return proposal
