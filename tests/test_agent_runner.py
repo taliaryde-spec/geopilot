@@ -78,8 +78,41 @@ def test_agent_calls_dataset_tool_and_returns_final_answer() -> None:
         "assistant",
     ]
     assert "CRS" in (model.requests[0][0][0].content or "")
+    assert "Never guess a target CRS" in (model.requests[0][0][0].content or "")
     assert model.requests[0][1][0].name == "inspect_dataset"
     assert "source" in model.requests[0][1][0].input_schema["properties"]
+
+
+def test_agent_calls_metric_crs_tool_and_returns_computed_epsg() -> None:
+    model = ScriptedChatModel(
+        [
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="call-crs",
+                        name="recommend_metric_crs",
+                        arguments={"source": str(SAMPLE_DATASET)},
+                    )
+                ]
+            ),
+            ModelResponse(
+                content="工具计算结果为 EPSG:32651，可用于后续米制距离分析。"
+            ),
+        ]
+    )
+    runner = AgentRunner(model, build_default_tool_registry())
+
+    result = runner.run(f"为 {SAMPLE_DATASET} 推荐距离分析坐标系")
+
+    assert result.tool_results[0].success is True
+    assert result.tool_results[0].output is not None
+    assert result.tool_results[0].output["recommended_epsg"] == 32651
+    assert result.tool_results[0].output["requires_reprojection"] is True
+    assert result.final_answer.startswith("工具计算结果为 EPSG:32651")
+    assert [definition.name for definition in model.requests[0][1]] == [
+        "inspect_dataset",
+        "recommend_metric_crs",
+    ]
 
 
 def test_agent_returns_unknown_tool_error_to_model() -> None:

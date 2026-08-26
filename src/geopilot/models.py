@@ -80,3 +80,29 @@ class DatasetIntakeResult(BaseModel):
 
     profile: DatasetProfile
     validation: DatasetValidationResult
+
+
+class MetricCrsRecommendationMethod(StrEnum):
+    """How GeoPilot selected a CRS suitable for metric analysis."""
+
+    EXISTING_METRIC_CRS = "existing_metric_crs"
+    ESTIMATED_UTM_CRS = "estimated_utm_crs"
+
+
+class MetricCrsRecommendation(BaseModel):
+    """Deterministic recommendation for distance and buffer operations."""
+
+    source: str = Field(description="Original dataset path")
+    source_crs: str = Field(description="CRS declared by the input dataset")
+    recommended_crs: str = Field(
+        description="Projected CRS recommended for metric analysis"
+    )
+    recommended_epsg: int | None = Field(
+        description="EPSG code when the recommended CRS has one"
+    )
+    linear_unit: str = Field(description="Linear unit of the recommended CRS")
+    requires_reprojection: bool = Field(
+        description="Whether data must be reprojected before metric analysis"
+    )
+    method: MetricCrsRecommendationMethod
+    warnings: list[str] = Field(default_factory=list)

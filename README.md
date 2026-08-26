@@ -2,7 +2,7 @@
 
 GeoPilot 是一个自然语言驱动的地理空间分析 Agent。用户提供空间数据和分析问题，Agent 将检查数据、规划分析步骤、调用 GIS 工具、验证结果，并生成地图与报告。
 
-> 当前项目处于 v0.1 开发阶段。本仓库已经完成矢量数据检查与验证流水线；自然语言规划和空间分析工具仍在持续实现。
+> 当前项目处于 v0.1 开发阶段。本仓库已经完成数据检查、真实 LLM Tool Calling 和确定性 CRS 推荐；自然语言规划与空间分析执行工具仍在持续实现。
 
 ## 演示场景
 
@@ -19,6 +19,8 @@ GeoPilot 是一个自然语言驱动的地理空间分析 Agent。用户提供�
 - 结构化 Pydantic 输出与稳定错误代码
 - `geopilot inspect` 命令行接口
 - Provider-neutral Agent Loop、System Prompt、Tool Registry 与工作记忆
+- OpenAI Responses API、DeepSeek/OpenRouter Chat Completions 与结构化 Tool Calling
+- 基于数据范围确定性推荐米制投影 CRS，并禁止 Agent 猜测 EPSG 编号
 - Ruff、Pyright 和 Pytest 质量检查
 
 完整组件规划与各阶段验收标准见 [GeoPilot 项目路线图](docs/PROJECT_ROADMAP.md)。
@@ -61,6 +63,43 @@ uv run geopilot inspect data/facilities.csv --longitude-column lon --latitude-co
 uv run geopilot inspect examples/data/neighborhoods.geojson
 ```
 
+运行真实模型 Agent 前，复制 `.env.example` 为 `.env`，填写自己的 API 密钥：
+
+```powershell
+Copy-Item .env.example .env
+```
+
+`.env` 已被 Git 忽略，不能把真实 API Key 写入源码或提交到仓库。示例默认使用 DeepSeek 直连：
+
+```dotenv
+GEOPILOT_PROVIDER=deepseek
+DEEPSEEK_API_KEY=your-key
+```
+
+也可以切换到 OpenRouter，但必须填写一个支持 Tool Calling 的完整模型 ID：
+
+```dotenv
+GEOPILOT_PROVIDER=openrouter
+OPENROUTER_API_KEY=your-key
+OPENROUTER_MODEL=provider/model-name
+```
+
+配置完成后运行：
+
+```powershell
+uv run geopilot agent "请检查 examples/data/facilities.csv，并说明数据是否可以继续分析"
+```
+
+Agent 会把 `inspect_dataset` 的 JSON Schema 发给模型。模型选择工具后，本地代码执行检查，再把结构化结果返回模型生成最终回答。切换供应商只改变模型适配层，不改变 Agent Loop 或 GIS 工具。SDK 重试次数、超时和最大输出 token 可在 `.env` 中配置。
+
+请求距离、缓冲区或面积分析时，Agent 必须调用 `recommend_metric_crs`，不能自行猜测 UTM 分区或 EPSG 编号：
+
+```powershell
+uv run geopilot agent "请为 examples/data/facilities.csv 推荐适合距离分析的投影坐标系"
+```
+
+上海演示数据的确定性结果是 `EPSG:32651`（WGS 84 / UTM zone 51N）。工具同时返回线性单位、是否需要重投影、计算方法和范围风险警告。
+
 命令会向标准输出写入 JSON，其中包含：
 
 - `profile`：数据事实，例如字段、CRS、范围和几何统计
@@ -74,6 +113,9 @@ uv run geopilot inspect examples/data/neighborhoods.geojson
 - `3`：输入文件不存在
 - `4`：数据验证发现阻断性错误
 - `5`：CSV 字段、坐标值或坐标范围无效
+- `6`：模型密钥、模型名或其他配置无效
+- `7`：模型鉴权、限流、超时、连接或 API 请求失败
+- `8`：模型返回格式或 Agent 循环异常
 
 PowerShell 可以通过 `$LASTEXITCODE` 查看退出码；Windows CMD 可以运行 `echo %ERRORLEVEL%`。
 
@@ -115,6 +157,7 @@ uv run pytest -q
 - [x] 检查矢量数据并生成结构化摘要
 - [x] 在分析前验证 CRS、缺失值和几何质量
 - [x] 读取带经纬度字段的 CSV 并转换为点图层
+- [x] 根据数据范围推荐米制投影 CRS，禁止 Agent 编造 EPSG
 - [ ] 将自然语言问题转换为空间分析计划
 - [ ] 在执行前让用户确认分析计划
 - [ ] 执行米制投影、缓冲区和空间连接

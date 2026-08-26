@@ -31,10 +31,10 @@ Evaluation / Tracing / Storage / Deployment / MCP
 |---|---|---|---|
 | 1 | 工程基础 | 已完成 | uv、src 布局、Git、Ruff、Pyright、Pytest |
 | 2 | 数据接入 | 已完成 | GeoJSON、Shapefile、CSV、CRS 与几何验证 |
-| 3 | Agent 核心 | 进行中 | Prompt、模型接口、Tool Registry、Agent Loop、工作记忆 |
-| 4 | 真实 LLM | 待开始 | API 配置、结构化 Tool Calling、重试、超时、成本边界 |
+| 3 | Agent 核心 | 已完成 | Prompt、模型接口、Tool Registry、Agent Loop、工作记忆 |
+| 4 | 真实 LLM | 已完成 | OpenAI Responses、DeepSeek/OpenRouter Chat Completions、配置、错误边界与 DeepSeek Tool Calling 实测 |
 | 5 | 规划与审批 | 待开始 | 结构化分析计划、风险、用户确认、可恢复状态机 |
-| 6 | GIS 执行工具 | 待开始 | 米制投影、缓冲区、空间连接、结果验证、报告 |
+| 6 | GIS 执行工具 | 进行中 | 已完成确定性米制 CRS 推荐；待实现重投影、缓冲区、空间连接、结果验证与报告 |
 | 7 | RAG 与 Embedding | 待开始 | 文档加载、切块、向量化、检索、引用与离线评测 |
 | 8 | Memory | 待开始 | 会话状态、任务检查点、用户偏好、长期记忆边界 |
 | 9 | Eval 与可观测性 | 待开始 | 测试集、工具成功率、幻觉率、Tracing、日志、成本 |
