@@ -142,6 +142,8 @@ uv run geopilot reject plan_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx --reason "需要先
 
 语义校验失败时，错误会作为工具结果返回模型；Agent 可以修正计划并重新提交，但错误版本不会写入计划存储。
 
+如果 Agent 达到最大模型轮数，CLI 会返回一个有界工具轨迹：只包含工具名、成功状态和错误代码，不输出完整 Prompt、API Key 或大型工具结果。这用于定位模型是否在重复检查、反复提交错误计划或遇到工具故障。
+
 命令会向标准输出写入 JSON，其中包含：
 
 - `profile`：数据事实，例如字段、CRS、范围和几何统计

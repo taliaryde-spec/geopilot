@@ -17,6 +17,20 @@ class AgentProtocolError(RuntimeError):
 class AgentMaxTurnsError(RuntimeError):
     """Raised when the Agent cannot finish within its safety limit."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        messages: list[AgentMessage],
+        tool_results: list[ToolResult],
+        model_turns: int,
+    ) -> None:
+        """Preserve a safe partial trace for diagnosing Agent loops."""
+        self.messages = messages
+        self.tool_results = tool_results
+        self.model_turns = model_turns
+        super().__init__(message)
+
 
 class AgentRunner:
     """Run model decisions and deterministic tools until a final answer exists."""
@@ -85,5 +99,8 @@ class AgentRunner:
             )
 
         raise AgentMaxTurnsError(
-            f"Agent exceeded the limit of {self._max_model_turns} model turns."
+            f"Agent exceeded the limit of {self._max_model_turns} model turns.",
+            messages=messages,
+            tool_results=tool_results,
+            model_turns=self._max_model_turns,
         )

@@ -204,8 +204,6 @@ _EXPECTED_INPUT_COUNTS = {
     AnalysisOperation.DISSOLVE: 1,
     AnalysisOperation.OVERLAY_INTERSECTION: 2,
     AnalysisOperation.SPATIAL_JOIN: 2,
-    AnalysisOperation.CALCULATE_COVERAGE_METRICS: 1,
-    AnalysisOperation.VALIDATE_RESULT: 1,
     AnalysisOperation.EXPORT_GEOJSON: 1,
 }
 

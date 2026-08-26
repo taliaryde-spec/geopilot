@@ -187,6 +187,29 @@ def _print_error(code: str, message: str) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2), file=sys.stderr)
 
 
+def _print_max_turns_error(error: AgentMaxTurnsError) -> None:
+    """Print a bounded tool trace without exposing full prompts or outputs."""
+    payload = {
+        "error": {
+            "code": "agent_max_turns",
+            "message": str(error),
+        },
+        "trace": {
+            "model_turns": error.model_turns,
+            "tool_results": [
+                {
+                    "name": result.name,
+                    "success": result.success,
+                    "error_code": result.error_code,
+                    "error": result.error,
+                }
+                for result in error.tool_results
+            ],
+        },
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2), file=sys.stderr)
+
+
 def _run_agent(
     prompt: str,
     *,
@@ -216,7 +239,10 @@ def _run_agent(
     except ModelRequestError as error:
         _print_error(error.code, str(error))
         return EXIT_MODEL_ERROR
-    except (AgentMaxTurnsError, AgentProtocolError, ModelResponseError) as error:
+    except AgentMaxTurnsError as error:
+        _print_max_turns_error(error)
+        return EXIT_AGENT_ERROR
+    except (AgentProtocolError, ModelResponseError) as error:
         _print_error("agent_runtime_error", str(error))
         return EXIT_AGENT_ERROR
     except ValueError as error:

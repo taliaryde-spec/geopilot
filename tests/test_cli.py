@@ -10,8 +10,9 @@ from shapely.geometry import Point, Polygon
 
 import geopilot.cli as cli_module
 from geopilot.agent.config import ModelSettings
-from geopilot.agent.models import ModelResponse
+from geopilot.agent.models import ModelResponse, ToolCall
 from geopilot.cli import (
+    EXIT_AGENT_ERROR,
     EXIT_CONFIGURATION_ERROR,
     EXIT_FILE_NOT_FOUND,
     EXIT_INPUT_ERROR,
@@ -109,6 +110,55 @@ def test_main_runs_agent_without_network(
     assert captured_max_tokens == [5000]
     assert captured.out == "Agent 已返回测试答案。\n"
     assert captured.err == ""
+
+
+def test_main_reports_bounded_trace_after_agent_max_turns(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class LoopingModel:
+        def complete(self, messages: object, tools: object) -> ModelResponse:
+            return ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="call-loop",
+                        name="missing_tool",
+                        arguments={},
+                    )
+                ]
+            )
+
+    monkeypatch.setenv("GEOPILOT_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("GEOPILOT_MODEL", "test-model")
+    monkeypatch.setattr(
+        cli_module,
+        "build_model",
+        lambda settings: LoopingModel(),
+    )
+
+    exit_code = main(["agent", "持续调用工具", "--max-turns", "2"])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.err)
+
+    assert exit_code == EXIT_AGENT_ERROR
+    assert captured.out == ""
+    assert payload["error"]["code"] == "agent_max_turns"
+    assert payload["trace"]["model_turns"] == 2
+    assert payload["trace"]["tool_results"] == [
+        {
+            "name": "missing_tool",
+            "success": False,
+            "error_code": "unknown_tool",
+            "error": "Tool is not registered: missing_tool",
+        },
+        {
+            "name": "missing_tool",
+            "success": False,
+            "error_code": "unknown_tool",
+            "error": "Tool is not registered: missing_tool",
+        },
+    ]
 
 
 def test_main_inspects_valid_dataset(
