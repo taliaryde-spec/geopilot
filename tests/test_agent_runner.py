@@ -17,6 +17,7 @@ from geopilot.agent.runner import (
     AgentRunner,
 )
 from geopilot.agent.tool_adapters import build_default_tool_registry
+from geopilot.planning.store import PlanStore
 
 SAMPLE_DATASET = (
     Path(__file__).resolve().parents[1] / "examples" / "data" / "facilities.csv"
@@ -112,7 +113,63 @@ def test_agent_calls_metric_crs_tool_and_returns_computed_epsg() -> None:
     assert [definition.name for definition in model.requests[0][1]] == [
         "inspect_dataset",
         "recommend_metric_crs",
+        "submit_analysis_plan",
     ]
+
+
+def test_agent_submits_structured_plan_for_human_approval(
+    tmp_path: Path,
+) -> None:
+    model = ScriptedChatModel(
+        [
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="call-plan",
+                        name="submit_analysis_plan",
+                        arguments={
+                            "user_goal": "分析设施服务覆盖范围",
+                            "datasets": [str(SAMPLE_DATASET)],
+                            "steps": [
+                                {
+                                    "step_id": 1,
+                                    "operation": "reproject",
+                                    "description": "转换到米制投影坐标系。",
+                                    "inputs": [str(SAMPLE_DATASET)],
+                                    "parameters": {"target_crs": "EPSG:32651"},
+                                    "expected_output": "米制设施点图层",
+                                    "risk_level": "medium",
+                                }
+                            ],
+                            "expected_outputs": ["米制设施点图层"],
+                            "risks": ["需要使用工具确认目标 CRS。"],
+                            "assumptions": [],
+                        },
+                    )
+                ]
+            ),
+            ModelResponse(
+                content=("计划 plan_agenttest 已提交，当前等待人工审批，尚未执行。")
+            ),
+        ]
+    )
+    plan_store = PlanStore(
+        tmp_path,
+        id_factory=lambda: "plan_agenttest",
+    )
+    runner = AgentRunner(
+        model,
+        build_default_tool_registry(plan_store=plan_store),
+    )
+
+    result = runner.run("分析设施覆盖范围")
+
+    assert result.tool_results[0].success is True
+    assert result.tool_results[0].output is not None
+    assert result.tool_results[0].output["plan_id"] == "plan_agenttest"
+    assert result.tool_results[0].output["status"] == "awaiting_approval"
+    assert plan_store.load("plan_agenttest").status == "awaiting_approval"
+    assert "尚未执行" in result.final_answer
 
 
 def test_agent_returns_unknown_tool_error_to_model() -> None:

@@ -14,10 +14,37 @@ from geopilot.cli import (
     EXIT_CONFIGURATION_ERROR,
     EXIT_FILE_NOT_FOUND,
     EXIT_INPUT_ERROR,
+    EXIT_PLAN_ERROR,
     EXIT_SUCCESS,
     EXIT_VALIDATION_ERROR,
     main,
 )
+from geopilot.planning.models import (
+    AnalysisOperation,
+    AnalysisPlanProposal,
+    AnalysisPlanStep,
+)
+from geopilot.planning.store import PlanStore
+
+
+def build_cli_plan(store: PlanStore) -> str:
+    """Persist a small pending plan and return its identifier."""
+    proposal = AnalysisPlanProposal(
+        user_goal="分析设施服务范围",
+        datasets=["facilities.csv"],
+        steps=[
+            AnalysisPlanStep(
+                step_id=1,
+                operation=AnalysisOperation.REPROJECT,
+                description="转换到米制坐标系。",
+                inputs=["facilities.csv"],
+                parameters={"target_crs": "EPSG:32651"},
+                expected_output="米制设施点图层",
+            )
+        ],
+        expected_outputs=["米制设施点图层"],
+    )
+    return store.create(proposal).plan_id
 
 
 def test_main_without_command_prints_help(
@@ -30,6 +57,9 @@ def test_main_without_command_prints_help(
     assert exit_code == EXIT_SUCCESS
     assert "inspect" in captured.out
     assert "agent" in captured.out
+    assert "show-plan" in captured.out
+    assert "approve" in captured.out
+    assert "reject" in captured.out
 
 
 def test_main_reports_missing_model_configuration(
@@ -213,3 +243,76 @@ def test_main_returns_validation_error_for_invalid_geometry(
     assert exit_code == EXIT_VALIDATION_ERROR
     assert payload["validation"]["can_proceed"] is False
     assert payload["validation"]["issues"][0]["code"] == "invalid_geometry"
+
+
+def test_main_shows_pending_analysis_plan(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = PlanStore(tmp_path, id_factory=lambda: "plan_cli_show")
+    plan_id = build_cli_plan(store)
+
+    exit_code = main(["show-plan", plan_id, "--plans-dir", str(tmp_path)])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == EXIT_SUCCESS
+    assert captured.err == ""
+    assert payload["plan_id"] == plan_id
+    assert payload["status"] == "awaiting_approval"
+
+
+def test_main_approves_pending_analysis_plan(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = PlanStore(tmp_path, id_factory=lambda: "plan_cli_approve")
+    plan_id = build_cli_plan(store)
+
+    exit_code = main(["approve", plan_id, "--plans-dir", str(tmp_path)])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == EXIT_SUCCESS
+    assert captured.err == ""
+    assert payload["status"] == "approved"
+    assert store.load(plan_id).status == "approved"
+
+
+def test_main_rejects_pending_analysis_plan(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = PlanStore(tmp_path, id_factory=lambda: "plan_cli_reject")
+    plan_id = build_cli_plan(store)
+
+    exit_code = main(
+        [
+            "reject",
+            plan_id,
+            "--reason",
+            "需要先确认服务半径字段。",
+            "--plans-dir",
+            str(tmp_path),
+        ]
+    )
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == EXIT_SUCCESS
+    assert captured.err == ""
+    assert payload["status"] == "rejected"
+    assert payload["rejection_reason"] == "需要先确认服务半径字段。"
+
+
+def test_main_reports_missing_analysis_plan(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = main(["approve", "plan_missing", "--plans-dir", str(tmp_path)])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.err)
+
+    assert exit_code == EXIT_PLAN_ERROR
+    assert captured.out == ""
+    assert payload["error"]["code"] == "plan_not_found"

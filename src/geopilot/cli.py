@@ -18,6 +18,7 @@ from geopilot.agent import (
     build_model,
 )
 from geopilot.agent.tool_adapters import build_default_tool_registry
+from geopilot.planning.store import PlanStore, PlanStoreError
 from geopilot.tools.csv_point_loader import CsvPointLoadError
 from geopilot.workflows.dataset_intake import inspect_and_validate_dataset
 
@@ -28,6 +29,7 @@ EXIT_INPUT_ERROR = 5
 EXIT_CONFIGURATION_ERROR = 6
 EXIT_MODEL_ERROR = 7
 EXIT_AGENT_ERROR = 8
+EXIT_PLAN_ERROR = 9
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -88,7 +90,43 @@ def build_parser() -> argparse.ArgumentParser:
         default=6,
         help="Maximum model turns before the Agent stops (default: 6).",
     )
+
+    show_plan_parser = subparsers.add_parser(
+        "show-plan",
+        help="Show a persisted analysis plan before making a decision.",
+    )
+    show_plan_parser.add_argument("plan_id", help="Plan identifier to display.")
+    _add_plans_directory_argument(show_plan_parser)
+
+    approve_parser = subparsers.add_parser(
+        "approve",
+        help="Approve a pending analysis plan without executing it.",
+    )
+    approve_parser.add_argument("plan_id", help="Plan identifier to approve.")
+    _add_plans_directory_argument(approve_parser)
+
+    reject_parser = subparsers.add_parser(
+        "reject",
+        help="Reject a pending analysis plan with a reason.",
+    )
+    reject_parser.add_argument("plan_id", help="Plan identifier to reject.")
+    reject_parser.add_argument(
+        "--reason",
+        required=True,
+        help="Human-readable reason for rejecting the plan.",
+    )
+    _add_plans_directory_argument(reject_parser)
     return parser
+
+
+def _add_plans_directory_argument(parser: argparse.ArgumentParser) -> None:
+    """Add the shared local plan-checkpoint directory option."""
+    parser.add_argument(
+        "--plans-dir",
+        type=Path,
+        default=Path("artifacts") / "plans",
+        help="Plan checkpoint directory (default: artifacts/plans).",
+    )
 
 
 def _run_inspect(
@@ -179,6 +217,45 @@ def _run_agent(
     return EXIT_SUCCESS
 
 
+def _run_show_plan(plan_id: str, plans_dir: Path) -> int:
+    """Print one persisted plan for human review."""
+    try:
+        plan = PlanStore(plans_dir).load(plan_id)
+    except PlanStoreError as error:
+        _print_error(error.code.value, str(error))
+        return EXIT_PLAN_ERROR
+
+    print(plan.model_dump_json(indent=2))
+    return EXIT_SUCCESS
+
+
+def _run_approve_plan(plan_id: str, plans_dir: Path) -> int:
+    """Persist an explicit human approval decision."""
+    try:
+        plan = PlanStore(plans_dir).approve(plan_id)
+    except PlanStoreError as error:
+        _print_error(error.code.value, str(error))
+        return EXIT_PLAN_ERROR
+
+    print(plan.model_dump_json(indent=2))
+    return EXIT_SUCCESS
+
+
+def _run_reject_plan(plan_id: str, reason: str, plans_dir: Path) -> int:
+    """Persist an explicit human rejection decision."""
+    try:
+        plan = PlanStore(plans_dir).reject(plan_id, reason)
+    except PlanStoreError as error:
+        _print_error(error.code.value, str(error))
+        return EXIT_PLAN_ERROR
+    except ValueError as error:
+        _print_error("invalid_rejection_reason", str(error))
+        return EXIT_PLAN_ERROR
+
+    print(plan.model_dump_json(indent=2))
+    return EXIT_SUCCESS
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the GeoPilot command-line entry point."""
     parser = build_parser()
@@ -197,6 +274,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             model=arguments.model,
             base_url=arguments.base_url,
             max_turns=arguments.max_turns,
+        )
+    if arguments.command == "show-plan":
+        return _run_show_plan(arguments.plan_id, arguments.plans_dir)
+    if arguments.command == "approve":
+        return _run_approve_plan(arguments.plan_id, arguments.plans_dir)
+    if arguments.command == "reject":
+        return _run_reject_plan(
+            arguments.plan_id,
+            arguments.reason,
+            arguments.plans_dir,
         )
 
     parser.print_help()

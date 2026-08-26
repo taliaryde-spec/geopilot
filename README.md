@@ -21,6 +21,7 @@ GeoPilot 是一个自然语言驱动的地理空间分析 Agent。用户提供�
 - Provider-neutral Agent Loop、System Prompt、Tool Registry 与工作记忆
 - OpenAI Responses API、DeepSeek/OpenRouter Chat Completions 与结构化 Tool Calling
 - 基于数据范围确定性推荐米制投影 CRS，并禁止 Agent 猜测 EPSG 编号
+- 结构化分析计划、文件检查点与明确的批准/拒绝状态转换
 - Ruff、Pyright 和 Pytest 质量检查
 
 完整组件规划与各阶段验收标准见 [GeoPilot 项目路线图](docs/PROJECT_ROADMAP.md)。
@@ -100,6 +101,32 @@ uv run geopilot agent "请为 examples/data/facilities.csv 推荐适合距离分
 
 上海演示数据的确定性结果是 `EPSG:32651`（WGS 84 / UTM zone 51N）。工具同时返回线性单位、是否需要重投影、计算方法和范围风险警告。
 
+对于重投影、缓冲区、空间连接、结果导出或报告任务，Agent 必须先调用 `submit_analysis_plan`。计划会以 `awaiting_approval` 状态保存在 `artifacts/plans/`，不会立即执行：
+
+```powershell
+uv run geopilot agent "分析 examples/data/facilities.csv 的服务覆盖范围，先给出计划，不要执行"
+```
+
+使用 Agent 返回的 `plan_id` 检查完整计划：
+
+```powershell
+uv run geopilot show-plan plan_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+确认输入、步骤、参数、输出、风险和假设后，显式批准计划：
+
+```powershell
+uv run geopilot approve plan_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+计划有问题时应拒绝并说明原因：
+
+```powershell
+uv run geopilot reject plan_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx --reason "需要先确认服务半径字段的单位"
+```
+
+批准只改变计划检查点的状态，不会提前执行空间分析。下一阶段的重投影、缓冲区和空间连接工具将使用 `plan_id` 检查授权状态。
+
 命令会向标准输出写入 JSON，其中包含：
 
 - `profile`：数据事实，例如字段、CRS、范围和几何统计
@@ -116,6 +143,7 @@ uv run geopilot agent "请为 examples/data/facilities.csv 推荐适合距离分
 - `6`：模型密钥、模型名或其他配置无效
 - `7`：模型鉴权、限流、超时、连接或 API 请求失败
 - `8`：模型返回格式或 Agent 循环异常
+- `9`：计划不存在、状态转换冲突或计划文件无效
 
 PowerShell 可以通过 `$LASTEXITCODE` 查看退出码；Windows CMD 可以运行 `echo %ERRORLEVEL%`。
 
@@ -158,8 +186,8 @@ uv run pytest -q
 - [x] 在分析前验证 CRS、缺失值和几何质量
 - [x] 读取带经纬度字段的 CSV 并转换为点图层
 - [x] 根据数据范围推荐米制投影 CRS，禁止 Agent 编造 EPSG
-- [ ] 将自然语言问题转换为空间分析计划
-- [ ] 在执行前让用户确认分析计划
+- [x] 将自然语言问题转换为可校验的结构化分析计划
+- [x] 持久化计划检查点，并在执行前要求用户批准或拒绝
 - [ ] 执行米制投影、缓冲区和空间连接
 - [ ] 验证分析结果并输出 GeoJSON 与 Markdown 报告
 - [ ] 提供可交互的 Web 界面
