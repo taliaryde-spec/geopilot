@@ -178,6 +178,23 @@ uv run geopilot reject plan_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx --reason "需要先
 
 确定性 GIS 工具层现已覆盖批准计划的全部 13 个步骤。下一阶段是 `ApprovedPlanExecutor`：它读取 `approved` 计划、为步骤建立产物依赖、调度工具、保存执行检查点，并在失败时停止而不是让 LLM 编造结果。
 
+## 可执行计划编译
+
+新提交的每个计划步骤除了面向用户的 `expected_output` 描述，还必须包含唯一的机器产物标识 `output`：
+
+```json
+{
+  "operation": "reproject",
+  "inputs": ["examples/data/neighborhoods.geojson"],
+  "output": "neighborhoods_projected",
+  "expected_output": "投影后的完整社区面图层"
+}
+```
+
+`src/geopilot/execution/compiler.py` 只编译 `approved` 计划，并拒绝缺少产物 ID、重复输出、覆盖原始数据集名称、引用未来步骤或使用规划期工具的计划。旧计划仍能查看和保留审批记录，但缺少 `output` 时不会被猜测执行，需要用 Prompt 0.5.0 或更高版本重新生成。
+
+`src/geopilot/execution/models.py` 定义了 GeoPackage、GeoJSON、Markdown 三类产物，以及 `pending → running → succeeded/failed` 的运行和步骤检查点状态。下一批将实现运行存储与确定性工具调度器。
+
 命令会向标准输出写入 JSON，其中包含：
 
 - `profile`：数据事实，例如字段、CRS、范围和几何统计
@@ -213,6 +230,7 @@ PowerShell 可以通过 `$LASTEXITCODE` 查看退出码；Windows CMD 可以运�
 src/geopilot/
 ├── agent/                 # Prompt、模型接口、工具注册表与 Agent Loop
 ├── cli.py                 # 命令行适配层
+├── execution/             # 已批准计划编译、执行状态与后续调度器
 ├── models.py              # Pydantic 数据契约
 ├── tools/                 # 可独立测试的确定性 GIS 工具
 └── workflows/             # 组合多个工具的业务流水线

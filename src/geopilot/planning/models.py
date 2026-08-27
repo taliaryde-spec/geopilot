@@ -50,6 +50,14 @@ class AnalysisPlanStep(BaseModel):
     description: str = Field(min_length=1)
     inputs: list[str] = Field(min_length=1)
     parameters: dict[str, Any] = Field(default_factory=dict)
+    output: str | None = Field(
+        default=None,
+        pattern=r"^[a-z][a-z0-9_]*$",
+        description=(
+            "Stable machine-readable artifact identifier. Optional only for "
+            "plans persisted before executable-plan support."
+        ),
+    )
     expected_output: str = Field(min_length=1)
     risk_level: PlanRiskLevel = PlanRiskLevel.LOW
 

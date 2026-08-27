@@ -1,11 +1,16 @@
 """Adapters that expose deterministic GeoPilot workflows as Agent tools."""
 
 from pathlib import Path
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from geopilot.agent.registry import AgentTool, ToolRegistry
-from geopilot.planning.models import AnalysisPlanProposal
+from geopilot.planning.models import (
+    AnalysisOperation,
+    AnalysisPlanProposal,
+    PlanRiskLevel,
+)
 from geopilot.planning.store import PlanStore
 from geopilot.tools.crs_recommender import recommend_metric_crs
 from geopilot.workflows.dataset_intake import inspect_and_validate_dataset
@@ -39,8 +44,37 @@ class RecommendMetricCrsArguments(BaseModel):
     )
 
 
-class SubmitAnalysisPlanArguments(AnalysisPlanProposal):
-    """Structured plan content accepted from the language model."""
+class SubmitAnalysisPlanStep(BaseModel):
+    """New model-submitted step with a required executable artifact id."""
+
+    step_id: int = Field(ge=1)
+    operation: AnalysisOperation
+    description: str = Field(min_length=1)
+    inputs: list[str] = Field(min_length=1)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    output: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
+    expected_output: str = Field(min_length=1)
+    risk_level: PlanRiskLevel = PlanRiskLevel.LOW
+
+
+class SubmitAnalysisPlanArguments(BaseModel):
+    """Executable structured plan content accepted from the language model."""
+
+    user_goal: str = Field(min_length=1)
+    datasets: list[str] = Field(min_length=1)
+    steps: list[SubmitAnalysisPlanStep] = Field(min_length=1)
+    expected_outputs: list[str] = Field(min_length=1)
+    risks: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_step_order(self) -> "SubmitAnalysisPlanArguments":
+        """Require an unambiguous order before converting to stored models."""
+        actual_ids = [step.step_id for step in self.steps]
+        expected_ids = list(range(1, len(self.steps) + 1))
+        if actual_ids != expected_ids:
+            raise ValueError("Plan step_id values must be sequential and start at 1.")
+        return self
 
 
 def _inspect_dataset(arguments: BaseModel) -> BaseModel:

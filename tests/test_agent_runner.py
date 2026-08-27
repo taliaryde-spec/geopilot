@@ -137,6 +137,7 @@ def test_agent_submits_structured_plan_for_human_approval(
                                     "description": "转换到米制投影坐标系。",
                                     "inputs": [str(SAMPLE_DATASET)],
                                     "parameters": {"target_crs": "EPSG:32651"},
+                                    "output": "facilities_projected",
                                     "expected_output": "米制设施点图层",
                                     "risk_level": "medium",
                                 }
@@ -185,6 +186,7 @@ def test_agent_can_correct_plan_after_semantic_validation_error(
                 "description": "连接设施与社区。",
                 "inputs": ["neighborhoods", "facilities"],
                 "parameters": {"join_type": "intersects"},
+                "output": "spatial_join_result",
                 "expected_output": "空间连接结果",
                 "risk_level": "medium",
             }
