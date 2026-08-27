@@ -334,6 +334,7 @@ dependencies = [
     { name = "pyproj" },
     { name = "python-dotenv" },
     { name = "socksio" },
+    { name = "tokenizers" },
 ]
 
 [package.dev-dependencies]
@@ -355,6 +356,7 @@ requires-dist = [
     { name = "pyproj", specifier = ">=3.7.2" },
     { name = "python-dotenv", specifier = ">=1.2.3" },
     { name = "socksio", specifier = ">=1.0.0" },
+    { name = "tokenizers", specifier = ">=0.22.2" },
 ]
 
 [package.metadata.requires-dev]

@@ -10,11 +10,15 @@ from geopilot.rag.chunker import (
 )
 from geopilot.rag.embeddings import (
     DEFAULT_EMBEDDING_MODEL,
+    EmbeddingError,
+    EmbeddingErrorCode,
     EmbeddingProvider,
     FastEmbedProvider,
+    TokenCounter,
 )
 from geopilot.rag.loader import load_knowledge_documents
 from geopilot.rag.models import KnowledgeBuildResult, KnowledgeSearchResult
+from geopilot.rag.tokenization import summarize_token_usage
 from geopilot.rag.vector_store import LocalVectorStore
 
 DEFAULT_KNOWLEDGE_INDEX = Path("artifacts") / "rag" / "index.json"
@@ -56,7 +60,23 @@ def build_knowledge_index(
         model_name,
         cache_directory=cache_directory,
     )
-    return LocalVectorStore(index_path, provider).build(chunks)
+    token_usage = None
+    if isinstance(provider, TokenCounter):
+        token_usage = summarize_token_usage(
+            [chunk.embedding_text for chunk in chunks],
+            provider,
+        )
+        if token_usage.over_limit_chunk_count:
+            raise EmbeddingError(
+                EmbeddingErrorCode.INPUT_TOKEN_LIMIT_EXCEEDED,
+                (
+                    f"{token_usage.over_limit_chunk_count} embedding input(s) exceed "
+                    f"the {token_usage.model_max_input_tokens}-token model limit; "
+                    "reduce chunk_size before building the index."
+                ),
+            )
+    build_result = LocalVectorStore(index_path, provider).build(chunks)
+    return build_result.model_copy(update={"token_usage": token_usage})
 
 
 def open_knowledge_retriever(

@@ -11,6 +11,7 @@ from geopilot.rag.embeddings import (
     EmbeddingErrorCode,
     EmbeddingProvider,
     FastEmbedProvider,
+    TokenCounter,
 )
 from geopilot.rag.evaluation import evaluate_retrieval, load_evaluation_cases
 from geopilot.rag.experiment import (
@@ -38,6 +39,7 @@ from geopilot.rag.models import (
     RetrievalEvaluationCase,
     RetrievalEvaluationResult,
     StoredVectorIndex,
+    TokenUsageStatistics,
     VectorIndexManifest,
 )
 from geopilot.rag.service import (
@@ -46,6 +48,10 @@ from geopilot.rag.service import (
     KnowledgeRetriever,
     build_knowledge_index,
     open_knowledge_retriever,
+)
+from geopilot.rag.tokenization import (
+    DEFAULT_TOKEN_WARNING_RATIO,
+    summarize_token_usage,
 )
 from geopilot.rag.vector_store import (
     LocalVectorStore,
@@ -60,6 +66,7 @@ __all__ = [
     "DEFAULT_EMBEDDING_MODEL",
     "DEFAULT_KNOWLEDGE_INDEX",
     "DEFAULT_MODEL_CACHE",
+    "DEFAULT_TOKEN_WARNING_RATIO",
     "ChunkingExperimentResult",
     "ChunkingExperimentRun",
     "ChunkingExperimentVariant",
@@ -82,6 +89,8 @@ __all__ = [
     "RetrievalEvaluationCase",
     "RetrievalEvaluationResult",
     "StoredVectorIndex",
+    "TokenCounter",
+    "TokenUsageStatistics",
     "VectorIndexManifest",
     "VectorStoreError",
     "VectorStoreErrorCode",
@@ -93,4 +102,5 @@ __all__ = [
     "load_knowledge_documents",
     "open_knowledge_retriever",
     "run_chunking_experiment",
+    "summarize_token_usage",
 ]

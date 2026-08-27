@@ -13,6 +13,7 @@ dependencies = [
     "pyproj>=3.7.2",
     "python-dotenv>=1.2.3",
     "socksio>=1.0.0",
+    "tokenizers>=0.22.2",
 ]
 
 [dependency-groups]
@@ -33,3 +34,7 @@ build-backend = "uv_build"
 
 [tool.ruff]
 extend-exclude = [".npm-cache", ".storage-analysis"]
+
+[tool.pytest.ini_options]
+addopts = "-p no:cacheprovider"
+testpaths = ["tests"]

@@ -36,7 +36,7 @@ Evaluation / Tracing / Storage / Deployment / MCP
 | 5 | 规划与审批 | 已完成 | 结构化计划、语义护栏、文件检查点、批准/拒绝状态机及 DeepSeek 多轮纠错实测 |
 | 6 | GIS 执行工具 | 已完成 | CRS、重投影、面积、缓冲、合并、求交、覆盖指标、恢复、连接、验证、导出与报告 |
 | 7 | Approved Plan Executor | 已完成 | 稳定产物 ID、严格参数契约、依赖编译、运行存储、工具调度、失败停止、检查点恢复与 CLI |
-| 8 | RAG 与 Embedding | 基础闭环完成，优化中 | 已完成结构感知切块、FastEmbed 中文向量、余弦检索、引用、Precision/Recall/MRR/NDCG 与 Chunk 参数对照；待完成 token 感知、混合检索、Rerank 与生成侧评估 |
+| 8 | RAG 与 Embedding | 基础闭环完成，优化中 | 已完成结构感知切块、真实 tokenizer 超限护栏、FastEmbed 中文向量、余弦检索、引用、Precision/Recall/MRR/NDCG 与 Chunk 参数对照；待完成混合检索、Rerank 与生成侧评估 |
 | 9 | Memory | 待开始 | 会话状态、任务检查点、用户偏好、长期记忆边界 |
 | 10 | Eval 与可观测性 | 待开始 | 测试集、工具成功率、幻觉率、Tracing、日志、成本 |
 | 11 | 产品与部署 | 待开始 | FastAPI、Web UI、数据库、Docker、CI/CD、安全 |

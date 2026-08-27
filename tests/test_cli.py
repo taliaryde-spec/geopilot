@@ -83,6 +83,8 @@ def test_chunk_experiment_parser_validates_repeatable_variants() -> None:
             "300:50",
             "--variant",
             "700:100",
+            "--token-warning-ratio",
+            "0.75",
         ]
     )
 
@@ -91,6 +93,7 @@ def test_chunk_experiment_parser_validates_repeatable_variants() -> None:
         {"chunk_size": 300, "chunk_overlap": 50},
         {"chunk_size": 700, "chunk_overlap": 100},
     ]
+    assert arguments.token_warning_ratio == 0.75
 
 
 def test_rag_search_reports_missing_index(

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from geopilot.rag.chunker import chunk_knowledge_documents
+from geopilot.rag.embeddings import EmbeddingError, EmbeddingErrorCode
 from geopilot.rag.evaluation import evaluate_retrieval, load_evaluation_cases
 from geopilot.rag.experiment import run_chunking_experiment
 from geopilot.rag.loader import load_knowledge_document, load_knowledge_documents
@@ -20,6 +21,7 @@ from geopilot.rag.service import (
     build_knowledge_index,
     open_knowledge_retriever,
 )
+from geopilot.rag.tokenization import summarize_token_usage
 from geopilot.rag.vector_store import (
     LocalVectorStore,
     VectorStoreError,
@@ -42,6 +44,13 @@ class KeywordEmbeddingProvider:
 
     def embed_query(self, query: str) -> list[float]:
         return self._embed(query)
+
+    @property
+    def max_input_tokens(self) -> int:
+        return 512
+
+    def count_tokens(self, texts: list[str]) -> list[int]:
+        return [len(text) for text in texts]
 
     @staticmethod
     def _embed(text: str) -> list[float]:
@@ -123,6 +132,8 @@ def test_build_search_persist_and_reopen_local_vector_index(tmp_path: Path) -> N
     assert build_result.chunk_count == 2
     assert build_result.dimension == 3
     assert build_result.sources == ["crs.md", "dictionary.md"]
+    assert build_result.token_usage is not None
+    assert build_result.token_usage.over_limit_chunk_count == 0
     assert stored_payload["manifest"]["model_name"] == provider.model_name
     assert result.hits[0].source == "crs.md"
     assert result.hits[0].score == pytest.approx(1.0)
@@ -144,6 +155,29 @@ def test_search_rejects_embedding_model_mismatch(tmp_path: Path) -> None:
         mismatched_store.search("投影 CRS")
 
     assert captured.value.code is VectorStoreErrorCode.MODEL_MISMATCH
+
+
+def test_index_build_rejects_embedding_inputs_above_token_limit(
+    tmp_path: Path,
+) -> None:
+    knowledge_path = tmp_path / "long.md"
+    knowledge_path.write_text(
+        "# 长文档\n\n## 超长章节\n\n" + ("投影坐标系。" * 120),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(EmbeddingError) as captured:
+        build_knowledge_index(
+            [knowledge_path],
+            index_path=tmp_path / "index.json",
+            chunk_size=900,
+            chunk_overlap=120,
+            embedding_provider=KeywordEmbeddingProvider(),
+            working_directory=tmp_path,
+        )
+
+    assert captured.value.code is EmbeddingErrorCode.INPUT_TOKEN_LIMIT_EXCEEDED
+    assert not (tmp_path / "index.json").exists()
 
 
 def test_retrieval_evaluation_calculates_ranking_metrics(tmp_path: Path) -> None:
@@ -348,6 +382,9 @@ def test_chunking_experiment_compares_variants_under_shared_settings(
     assert result.runs[0].chunk_count > result.runs[1].chunk_count
     assert result.runs[0].max_chunk_characters <= 120
     assert result.runs[1].max_chunk_characters <= 300
+    assert result.runs[0].token_usage.model_max_input_tokens == 512
+    assert result.runs[0].token_usage.max_embedding_tokens > 0
+    assert result.runs[0].token_usage.over_limit_chunk_count == 0
     assert all(run.evaluation.mean_recall_at_k == 1.0 for run in result.runs)
     assert all(Path(run.index_path).is_file() for run in result.runs)
 
@@ -375,5 +412,52 @@ def test_chunking_experiment_rejects_duplicate_variants(tmp_path: Path) -> None:
             variants=[variant, variant],
             output_directory=tmp_path / "experiment",
             embedding_provider=KeywordEmbeddingProvider(),
+            working_directory=tmp_path,
+        )
+
+
+def test_token_usage_statistics_count_pre_truncation_risk() -> None:
+    provider = KeywordEmbeddingProvider()
+
+    statistics = summarize_token_usage(
+        ["a" * 100, "b" * 410, "c" * 513],
+        provider,
+    )
+
+    assert statistics.model_max_input_tokens == 512
+    assert statistics.warning_threshold_tokens == 410
+    assert statistics.mean_embedding_tokens == pytest.approx(341.0)
+    assert statistics.p95_embedding_tokens == 513
+    assert statistics.max_embedding_tokens == 513
+    assert statistics.max_input_utilization == pytest.approx(513 / 512)
+    assert statistics.warning_chunk_count == 2
+    assert statistics.over_limit_chunk_count == 1
+
+
+def test_chunking_experiment_rejects_mismatched_tokenizer_model(
+    tmp_path: Path,
+) -> None:
+    knowledge_path = tmp_path / "knowledge.md"
+    knowledge_path.write_text("# 知识\n\n有效正文", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="must match"):
+        run_chunking_experiment(
+            [knowledge_path],
+            [
+                RetrievalEvaluationCase(
+                    case_id="knowledge",
+                    query="正文是什么？",
+                    relevant_targets=[
+                        RelevantKnowledgeTarget(source="knowledge.md", section="知识")
+                    ],
+                )
+            ],
+            variants=[
+                ChunkingExperimentVariant(chunk_size=300, chunk_overlap=50),
+                ChunkingExperimentVariant(chunk_size=500, chunk_overlap=80),
+            ],
+            output_directory=tmp_path / "experiment",
+            embedding_provider=KeywordEmbeddingProvider(),
+            token_counter=KeywordEmbeddingProvider("other-model"),
             working_directory=tmp_path,
         )

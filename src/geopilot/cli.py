@@ -34,6 +34,7 @@ from geopilot.rag import (
     DEFAULT_EMBEDDING_MODEL,
     DEFAULT_KNOWLEDGE_INDEX,
     DEFAULT_MODEL_CACHE,
+    DEFAULT_TOKEN_WARNING_RATIO,
     ChunkingExperimentVariant,
     EmbeddingError,
     KnowledgeLoadError,
@@ -270,6 +271,12 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Embedding model shared by variants (default: {DEFAULT_EMBEDDING_MODEL}).",
     )
     chunk_experiment_parser.add_argument("--top-k", type=int, default=3)
+    chunk_experiment_parser.add_argument(
+        "--token-warning-ratio",
+        type=float,
+        default=DEFAULT_TOKEN_WARNING_RATIO,
+        help="Flag chunks at or above this share of the model token limit.",
+    )
     return parser
 
 
@@ -654,6 +661,7 @@ def _run_rag_chunk_experiment(
     model_cache: Path,
     embedding_model: str,
     top_k: int,
+    token_warning_ratio: float,
 ) -> int:
     """Compare chunking variants and print all build and retrieval metrics."""
     try:
@@ -665,6 +673,7 @@ def _run_rag_chunk_experiment(
             model_name=embedding_model,
             cache_directory=model_cache,
             top_k=top_k,
+            token_warning_ratio=token_warning_ratio,
             working_directory=Path.cwd(),
         )
     except (
@@ -759,6 +768,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             model_cache=arguments.model_cache,
             embedding_model=arguments.embedding_model,
             top_k=arguments.top_k,
+            token_warning_ratio=arguments.token_warning_ratio,
         )
 
     parser.print_help()

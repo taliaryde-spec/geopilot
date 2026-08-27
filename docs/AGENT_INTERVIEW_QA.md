@@ -160,11 +160,11 @@ Embedding 使用可离线预计算的独立向量做粗召回；DeepSeek 是生�
 
 ### 35. 为什么不选索引最小、速度更快的 `900/120`？
 
-900 在一次本机实验中索引最小，但耗时差异受缓存和系统负载影响，不能据此下稳定性能结论。更重要的是当前参数单位是字符，而 Embedding 限制通常是 token；900 个中文字符加标题更可能触发截断。三组质量相同的情况下，500 是更保守的输入长度折中。下一步应记录真实 token 数后再判断。
+900 在一次本机实验中索引最小，但耗时差异受缓存和系统负载影响，不能据此下稳定性能结论。真实 BGE tokenizer 实验进一步发现 `900/120` 最大达到 686 token，17 个 Chunk 中有 2 个超过模型 512 上限；`700/100` 也有 2 个超限。它们的检索分数虽与 500 相同，但向量实际对应的是被截断内容，因此不能据此选择长 Chunk。
 
 ### 36. 字符切块和 token 切块有什么区别？
 
-字符数实现简单、与中英文标点边界容易组合，但字符数和模型 tokenizer 产生的 token 数不是固定比例，尤其中文、英文、数字和专业符号混合时差异明显。模型真正限制的是 token，因此生产化前应对最终 `title + section + text` 统计 token，并拒绝或继续切分超限片段。
+字符数实现简单、与中英文标点边界容易组合，但字符数和模型 tokenizer 产生的 token 数不是固定比例，尤其中文、英文、数字和专业符号混合时差异明显。GeoPilot 仍使用字符和自然边界生成 Chunk，但在 Embedding 前对最终 `title + section + text` 使用同一 BGE tokenizer 做未截断计数；正式建库会拒绝超限片段。
 
 ## 八、尚未实现组件的边界题
 
@@ -184,9 +184,17 @@ RAG 语料和黄金集小，只支持 Markdown/TXT，Chunk 按字符而不是 to
 
 我做了三层验证。第一层是检索器单元测试，验证切块、Embedding、排序和引用；第二层是黄金集评估，记录 Recall、MRR 和 NDCG；第三层是使用真实 DeepSeek 模型运行 `geopilot agent`，让模型自主调用 `search_knowledge` 回答公共设施候选选址问题。实际响应引用了新增的选址知识，正确说明候选点不能直接作为最终建设位置以及缺失的可行性数据，同时没有误调用空间分析工具。这证明了真实链路是“LLM 决策 → Function Calling → RAG → 引用回答”，而不是在测试代码中直接调用检索函数。
 
+### 41. 你如何发现 Embedding 输入被静默截断？
+
+我没有只看字符长度，而是用生成向量的同一 FastEmbed tokenizer 统计完整 `embedding_text`。FastEmbed 默认 tokenizer 会先截断再返回 token 数，因此直接调用 `token_count` 无法知道原文超了多少；GeoPilot 克隆 tokenizer、关闭克隆体 truncation，再做逐 Chunk 计数。实验发现 700/100 和 900/120 都各有 2 个片段超过 BGE 的 512-token 上限。
+
+### 42. 为什么告警阈值是 80%，它与 512 上限有什么区别？
+
+512 是模型的硬上限，超过后输入会被截断；80% 是 GeoPilot 可配置的工程预警线，默认对应 410 token，用于提前暴露余量不足。`500/80` 的最大输入是 443 token，因而有 3 个告警但没有超限，可以建库；任何大于 512 的输入则会在 Embedding 和写索引前直接失败。告警阈值不是模型能力声明，也不能消除后续语料增长带来的风险。
+
 ## 九、简历描述草案
 
-实现自然语言驱动的 GeoPilot GIS Agent：设计 Provider-neutral LLM 适配、Pydantic Function Calling、结构化规划与人工审批，使用确定性 GeoPandas Workflow 完成 13 步覆盖分析并支持失败检查点恢复；构建本地引用型 RAG，采用 Markdown 结构感知切块和 BGE 中文 Embedding，实现 Chunk 参数控制变量实验及 Precision/Recall/MRR/NDCG 黄金评估，在 10 条演示样例上取得 Recall@3 1.0、MRR 0.90、NDCG@3 0.9262，并明确小样本边界。
+实现自然语言驱动的 GeoPilot GIS Agent：设计 Provider-neutral LLM 适配、Pydantic Function Calling、结构化规划与人工审批，使用确定性 GeoPandas Workflow 完成 13 步覆盖分析并支持失败检查点恢复；构建本地引用型 RAG，采用 Markdown 结构感知切块、BGE 中文 Embedding 与同 tokenizer 截断护栏，实现 Chunk 参数控制变量实验及 Precision/Recall/MRR/NDCG 黄金评估，在 10 条演示样例上取得 Recall@3 1.0、MRR 0.90、NDCG@3 0.9262，并明确小样本边界。
 
 ## 迭代记录
 
@@ -206,3 +214,10 @@ RAG 语料和黄金集小，只支持 Markdown/TXT，Chunk 按字符而不是 to
 
 - 新增“如何证明 RAG 真正接入 Agent”的项目化回答。
 - 证据来自真实 DeepSeek Function Calling，而不是仅依赖 mock 或直接函数测试。
+
+### 2026-08-27：Token-aware Chunking V1
+
+- 新增“如何识别静默截断”和“80% 告警线与 512 硬上限的区别”两道项目化追问。
+- 用真实 BGE tokenizer 证明 `500/80` 无超限，而 700/900 各有 2 个超限 Chunk。
+- 真实 CLI 失败路径返回退出码 11 且不创建索引；安全默认值成功重建主索引。
+- 面试回答明确区分字符分块、token 测量、工程告警和模型硬限制。

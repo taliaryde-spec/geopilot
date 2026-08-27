@@ -90,6 +90,8 @@ Compiler 验证产物依赖、输出唯一性和操作参数，Dispatcher 将每
 
 知识库存在时才注册 `search_knowledge`。离线侧加载 Markdown/TXT，采用 Markdown 标题结构感知切分，超长章节再按自然分隔符递归字符切分；默认最大 500 字符、重叠 80 字符，该参数来自四组控制变量实验。`BAAI/bge-small-zh-v1.5` 分别通过 passage/query 接口生成 512 维向量，向量 L2 归一化后写入 JSON 索引。在线侧使用同一模型生成 Query 向量，精确计算余弦相似度并返回正文、分数和稳定引用。
 
+Token 护栏位于 `rag/embeddings.py`、`rag/tokenization.py` 和 `rag/service.py`。`FastEmbedProvider` 克隆当前模型 tokenizer 并关闭克隆体的 truncation，以便测量完整 `title + section + text` 的原始 token 数，同时保留模型真实的 512-token 配置。正式 `rag-build` 在生成向量和写索引前统计平均、P95、最大值、80% 告警数与超限数；发现超限时返回 `embedding_input_token_limit_exceeded`。自定义 Embedding Provider 只有实现 `TokenCounter` 契约时才获得该护栏。
+
 当前仅有 19 个 Chunk，选择 JSON + NumPy 是为了透明和便于测试；它不是面向百万向量、并发与增量索引的生产向量数据库。RAG 用于项目规则和字段知识，不代替数据检查或 GIS 数值计算。
 
 ### 8. 检索评估
@@ -174,3 +176,16 @@ GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和�
 - 实际行为：Agent 检索了新增的 `knowledge/facility_site_selection.md`，引用对应章节，说明候选点不等于最终建设位置，并列出道路与可达性、土地利用与规划、权属、地形水文、生态灾害和建筑等缺失数据。
 - 安全边界：本次请求只需要知识回答，Agent 没有调用 GIS 分析工具，也没有生成或执行分析计划。
 - 结论：验证链路覆盖了“真实模型判断是否检索 → 工具调用 → 本地向量检索 → 带来源回答”，不仅是单元测试中的直接函数调用。
+
+### 2026-08-27：Token-aware Chunking 与建库护栏 V1
+
+- 实现：新增 `TokenCounter`、`TokenUsageStatistics` 和 `summarize_token_usage`；`rag-chunk-experiment` 输出模型上限、平均/P95/最大 token、利用率、告警数和超限数。
+- 计数口径：使用生成向量的同一 FastEmbed tokenizer，统计完整 `KnowledgeChunk.embedding_text`，并通过克隆 tokenizer 后关闭 truncation 获得截断前长度。
+- 正式护栏：`build_knowledge_index` 在 Embedding 和写索引前拒绝任何超过模型上限的输入；错误码为 `embedding_input_token_limit_exceeded`。
+- CLI 实测：`rag-build --chunk-size 900 --chunk-overlap 120` 返回退出码 11，报告 2 个超限输入且探针索引不存在；默认 `500/80` 成功重建 3 文档、19 Chunk 的主索引。
+- 真实结果：BGE 上限 512 token。`300/50` 最大 302、无告警；`500/80` 最大 443、3 个达到 80% 告警线、无超限；`700/100` 最大 655、2 个超限；`900/120` 最大 686、2 个超限。
+- 决策：保留默认 `500/80`。它保持 Recall@3 1.0 且没有截断；700 与 900 的检索指标虽然相同，但部分文档向量建立在被截断的输入上，不能作为更优方案。
+- 测试：覆盖预截断计数、P95/阈值计算、tokenizer 模型一致性和“超限时不创建索引”；全项目 141 项测试通过。
+- 证据：`docs/evaluations/RAG_TOKEN_AWARE_CHUNKING_V1.md`。
+- 局限：80% 是工程告警阈值而非模型规则；当前分块边界仍按字符生成，只是在 Embedding 前用 token 做测量和阻断。
+- 下一步：固定默认 Chunk 与黄金集，实现稠密向量 + BM25 的 Hybrid Search 对照实验。

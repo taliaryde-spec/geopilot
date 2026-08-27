@@ -88,6 +88,7 @@ class KnowledgeBuildResult(BaseModel):
     document_count: int = Field(ge=1)
     chunk_count: int = Field(ge=1)
     sources: list[str] = Field(min_length=1)
+    token_usage: "TokenUsageStatistics | None" = None
 
 
 class KnowledgeSearchHit(BaseModel):
@@ -182,6 +183,30 @@ class ChunkingExperimentVariant(BaseModel):
         return f"chars_{self.chunk_size}_overlap_{self.chunk_overlap}"
 
 
+class TokenUsageStatistics(BaseModel):
+    """Pre-truncation tokenizer measurements for embedding inputs."""
+
+    model_max_input_tokens: int = Field(ge=1)
+    warning_threshold_ratio: float = Field(gt=0, le=1)
+    warning_threshold_tokens: int = Field(ge=1)
+    mean_embedding_tokens: float = Field(gt=0)
+    p95_embedding_tokens: int = Field(ge=1)
+    max_embedding_tokens: int = Field(ge=1)
+    max_input_utilization: float = Field(gt=0)
+    warning_chunk_count: int = Field(ge=0)
+    over_limit_chunk_count: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_statistics(self) -> "TokenUsageStatistics":
+        if self.warning_threshold_tokens > self.model_max_input_tokens:
+            raise ValueError("Token warning threshold cannot exceed the model limit.")
+        if self.p95_embedding_tokens > self.max_embedding_tokens:
+            raise ValueError("Token p95 cannot exceed the observed maximum.")
+        if self.over_limit_chunk_count > self.warning_chunk_count:
+            raise ValueError("Over-limit chunks must also be warning chunks.")
+        return self
+
+
 class ChunkingExperimentRun(BaseModel):
     """Build characteristics and retrieval metrics for one variant."""
 
@@ -191,6 +216,7 @@ class ChunkingExperimentRun(BaseModel):
     chunk_count: int = Field(ge=1)
     mean_chunk_characters: float = Field(gt=0)
     max_chunk_characters: int = Field(ge=1)
+    token_usage: TokenUsageStatistics
     index_size_bytes: int = Field(ge=1)
     build_duration_ms: float = Field(ge=0)
     evaluation_duration_ms: float = Field(ge=0)

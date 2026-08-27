@@ -22,7 +22,7 @@ GeoPilot 后续大模型部分以[卡码大模型学习路线](https://notes.kam
 |---|---|---|---|
 | Prompt 与模型调用 | `agent/prompts.py`、模型适配器、Pydantic Tool Schema | 基础闭环完成 | Prompt 版本、结构化输出失败率、token/延迟统计 |
 | Function Calling | Tool Registry、数据检查、CRS、计划提交、知识检索 | 已实测 | DeepSeek 多轮工具调用、错误纠正轨迹 |
-| RAG 离线链路 | 文档加载、清洗、结构感知切块、Embedding、索引 | 第一版完成 | 3 文档、19 chunks、512 维索引 |
+| RAG 离线链路 | 文档加载、结构感知切块、同模型 tokenizer 检查、Embedding、索引 | 第一版完成 | 3 文档、19 chunks、512 维索引；超限构建前失败 |
 | RAG 在线链路 | Query Embedding、余弦检索、引用、Agent 工具 | 第一版完成 | 章节级检索 baseline |
 | RAG 优化 | Query 改写、混合检索、Rerank、Context 压缩 | 未开始 | 每次只改变一个变量的对照实验 |
 | RAG 评估 | Precision、Recall、MRR、NDCG | 检索侧第一版完成 | `docs/evaluations/RAG_BASELINE_V1.md` |
@@ -39,8 +39,8 @@ GeoPilot 后续大模型部分以[卡码大模型学习路线](https://notes.kam
 1. 已完成：受控 GIS 文档、结构感知 + 递归字符切块、本地中文 Embedding、精确余弦检索和引用。
 2. 已完成：章节与正文片段级黄金标签，Precision@K、Recall@K、MRR、NDCG@K。
 3. 已完成：固定 Embedding 和知识库，对比四组 chunk size/overlap，选择 `500/80`。
-4. 下一步：增加 Embedding token 统计，识别字符切块可能造成的截断风险。
-5. 再下一步：加入关键词检索，与稠密向量组成 Hybrid Search。
+4. 已完成：用 BGE 的真实 tokenizer 统计完整 Embedding 输入，并在正式建库前拒绝超限 Chunk。
+5. 下一步：加入关键词检索，与稠密向量组成 Hybrid Search。
 6. 然后：在同一评估集上验证是否需要 Rerank，而不是因为“热门”就添加。
 7. 最后：增加回答忠实度、答案相关性、引用正确率和拒答评估。
 

@@ -223,7 +223,7 @@ GeoPilot 使用 RAG 检索 GIS 分析规则、项目数据字典和字段定义�
 uv run geopilot rag-build knowledge
 ```
 
-默认 Embedding 模型是 `BAAI/bge-small-zh-v1.5`。首次执行会下载模型到被 Git 忽略的 `artifacts/models/fastembed/`，并把可移植 JSON 向量索引写入 `artifacts/rag/index.json`。当前知识库包含 3 份文档、19 个标题感知片段和 512 维向量。默认 Chunk 参数为实验选出的 `500/80`，分别表示最大字符数与重叠字符数。
+默认 Embedding 模型是 `BAAI/bge-small-zh-v1.5`。首次执行会下载模型到被 Git 忽略的 `artifacts/models/fastembed/`，并把可移植 JSON 向量索引写入 `artifacts/rag/index.json`。当前知识库包含 3 份文档、19 个标题感知片段和 512 维向量。默认 Chunk 参数为实验选出的 `500/80`，分别表示最大字符数与重叠字符数。索引构建会使用同一模型 tokenizer 对完整的 `title + section + text` 做未截断计数；超过 512 token 时会在写索引前报错，避免静默截断。
 
 直接检查检索结果和引用：
 
@@ -237,13 +237,15 @@ uv run geopilot rag-search "为什么不能在 EPSG:4326 中直接做米制缓�
 uv run geopilot rag-evaluate knowledge/retrieval_cases.json --top-k 3
 ```
 
-当前 10 条 GIS 黄金样例的真实 Top-3 结果为：`Hit Rate = 1.00`、`Precision = 0.3333`、`Recall = 1.00`、`MRR = 0.90`、`NDCG = 0.9262`。标签同时指定来源、章节、正文子串和相关度等级，不只检查是否命中了同一份文档。6 条样例的历史基线见 [RAG Baseline V1](docs/evaluations/RAG_BASELINE_V1.md)，参数选择过程见 [Chunking Experiment V1](docs/evaluations/RAG_CHUNK_EXPERIMENT_V1.md)。
+当前 10 条 GIS 黄金样例的真实 Top-3 结果为：`Hit Rate = 1.00`、`Precision = 0.3333`、`Recall = 1.00`、`MRR = 0.90`、`NDCG = 0.9262`。标签同时指定来源、章节、正文子串和相关度等级，不只检查是否命中了同一份文档。6 条样例的历史基线见 [RAG Baseline V1](docs/evaluations/RAG_BASELINE_V1.md)，参数选择过程见 [Chunking Experiment V1](docs/evaluations/RAG_CHUNK_EXPERIMENT_V1.md)，真实 tokenizer 结果见 [Token-aware Chunking V1](docs/evaluations/RAG_TOKEN_AWARE_CHUNKING_V1.md)。
 
 复现 Chunking 控制变量实验：
 
 ```powershell
 uv run geopilot rag-chunk-experiment knowledge --cases knowledge/retrieval_cases.json --top-k 3
 ```
+
+实验输出同时包含模型 token 上限、平均/P95/最大 token、最大利用率、80% 告警 Chunk 数和超限 Chunk 数。可用 `--token-warning-ratio 0.75` 调整告警线；该参数只影响风险标记，不改变模型真实的 512-token 上限。
 
 后续大模型学习和面试准备以 [GeoPilot 大模型学习与面试主线](docs/LLM_LEARNING_PATH.md) 为统一入口；每个阶段必须同时交付原理、代码、测试、真实实验、技术取舍、面试回答和诚实的简历描述。
 

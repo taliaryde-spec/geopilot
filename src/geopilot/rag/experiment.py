@@ -10,6 +10,7 @@ from geopilot.rag.embeddings import (
     DEFAULT_EMBEDDING_MODEL,
     EmbeddingProvider,
     FastEmbedProvider,
+    TokenCounter,
 )
 from geopilot.rag.evaluation import evaluate_retrieval
 from geopilot.rag.loader import load_knowledge_documents
@@ -20,6 +21,10 @@ from geopilot.rag.models import (
     RetrievalEvaluationCase,
 )
 from geopilot.rag.service import DEFAULT_MODEL_CACHE, KnowledgeRetriever
+from geopilot.rag.tokenization import (
+    DEFAULT_TOKEN_WARNING_RATIO,
+    summarize_token_usage,
+)
 from geopilot.rag.vector_store import LocalVectorStore
 
 DEFAULT_CHUNKING_VARIANTS = (
@@ -40,6 +45,8 @@ def run_chunking_experiment(
     cache_directory: str | Path = DEFAULT_MODEL_CACHE,
     top_k: int = 3,
     embedding_provider: EmbeddingProvider | None = None,
+    token_counter: TokenCounter | None = None,
+    token_warning_ratio: float = DEFAULT_TOKEN_WARNING_RATIO,
     working_directory: str | Path | None = None,
     timer: Callable[[], float] = perf_counter,
 ) -> ChunkingExperimentResult:
@@ -63,6 +70,15 @@ def run_chunking_experiment(
         model_name,
         cache_directory=cache_directory,
     )
+    selected_token_counter = token_counter
+    if selected_token_counter is None and isinstance(provider, TokenCounter):
+        selected_token_counter = provider
+    if selected_token_counter is None:
+        raise ValueError(
+            "Chunking experiments require a token counter for the embedding model."
+        )
+    if selected_token_counter.model_name != provider.model_name:
+        raise ValueError("Token counter model must match the embedding provider model.")
     selected_output_directory = Path(output_directory).resolve()
     runs: list[ChunkingExperimentRun] = []
 
@@ -87,6 +103,11 @@ def run_chunking_experiment(
         )
         evaluation_duration_ms = max(0.0, (timer() - evaluation_started) * 1000)
         chunk_lengths = [len(chunk.text) for chunk in chunks]
+        token_usage = summarize_token_usage(
+            [chunk.embedding_text for chunk in chunks],
+            selected_token_counter,
+            warning_threshold_ratio=token_warning_ratio,
+        )
         runs.append(
             ChunkingExperimentRun(
                 variant=variant,
@@ -95,6 +116,7 @@ def run_chunking_experiment(
                 chunk_count=build.chunk_count,
                 mean_chunk_characters=fmean(chunk_lengths),
                 max_chunk_characters=max(chunk_lengths),
+                token_usage=token_usage,
                 index_size_bytes=index_path.stat().st_size,
                 build_duration_ms=build_duration_ms,
                 evaluation_duration_ms=evaluation_duration_ms,
