@@ -34,12 +34,13 @@ Evaluation / Tracing / Storage / Deployment / MCP
 | 3 | Agent 核心 | 已完成 | Prompt、模型接口、Tool Registry、Agent Loop、工作记忆 |
 | 4 | 真实 LLM | 已完成 | OpenAI Responses、DeepSeek/OpenRouter Chat Completions、配置、错误边界与 DeepSeek Tool Calling 实测 |
 | 5 | 规划与审批 | 已完成 | 结构化计划、语义护栏、文件检查点、批准/拒绝状态机及 DeepSeek 多轮纠错实测 |
-| 6 | GIS 执行工具 | 进行中 | 已完成 CRS、重投影、面积、缓冲、合并、求交、覆盖指标、零覆盖恢复与连接；待实现验证、导出与报告 |
-| 7 | RAG 与 Embedding | 待开始 | 文档加载、切块、向量化、检索、引用与离线评测 |
-| 8 | Memory | 待开始 | 会话状态、任务检查点、用户偏好、长期记忆边界 |
-| 9 | Eval 与可观测性 | 待开始 | 测试集、工具成功率、幻觉率、Tracing、日志、成本 |
-| 10 | 产品与部署 | 待开始 | FastAPI、Web UI、数据库、Docker、CI/CD、安全 |
-| 11 | MCP | 待开始 | 将稳定 GIS 工具发布为可复用 MCP Server |
+| 6 | GIS 执行工具 | 已完成 | CRS、重投影、面积、缓冲、合并、求交、覆盖指标、恢复、连接、验证、导出与报告 |
+| 7 | Approved Plan Executor | 待开始 | 仅执行已批准计划、解析产物依赖、调度工具、检查点、失败停止与恢复 |
+| 8 | RAG 与 Embedding | 待开始 | 文档加载、切块、向量化、检索、引用与离线评测 |
+| 9 | Memory | 待开始 | 会话状态、任务检查点、用户偏好、长期记忆边界 |
+| 10 | Eval 与可观测性 | 待开始 | 测试集、工具成功率、幻觉率、Tracing、日志、成本 |
+| 11 | 产品与部署 | 待开始 | FastAPI、Web UI、数据库、Docker、CI/CD、安全 |
+| 12 | MCP | 待开始 | 将稳定 GIS 工具发布为可复用 MCP Server |
 
 ## 开发原则
 

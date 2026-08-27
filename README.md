@@ -168,7 +168,15 @@ uv run geopilot reject plan_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx --reason "需要先
 - `count_spatial_relationships`：通过左空间连接统计社区内设施数量，同时保留 0 设施社区
 - `join_coverage_attributes`：只把右侧新增字段合并到覆盖结果，保留左侧标准人口和社区字段名
 
-至此，确定性工具已覆盖批准计划的第 1～10 步。结果验证、EPSG:4326 GeoJSON 导出和 Markdown 报告将在下一批工具中实现；所有写文件工具仍只能由后续审批执行器调用。
+上述工具覆盖批准计划的第 1～10 步。结果验证、EPSG:4326 GeoJSON 导出和 Markdown 报告由下述输出工具完成；所有写文件工具仍只能由后续审批执行器调用。
+
+结果输出工具位于 `src/geopilot/tools/result_outputs.py`：
+
+- `validate_coverage_result`：执行几何、空值、覆盖率边界和覆盖人口边界四项规范检查，失败时不写“已验证”产物
+- `export_web_geojson`：将验证结果重投影为 EPSG:4326，并原子写出 Web GeoJSON
+- `generate_coverage_report`：直接从验证结果汇总社区、人口、覆盖和设施计数，生成可复现 Markdown 报告
+
+确定性 GIS 工具层现已覆盖批准计划的全部 13 个步骤。下一阶段是 `ApprovedPlanExecutor`：它读取 `approved` 计划、为步骤建立产物依赖、调度工具、保存执行检查点，并在失败时停止而不是让 LLM 编造结果。
 
 命令会向标准输出写入 JSON，其中包含：
 

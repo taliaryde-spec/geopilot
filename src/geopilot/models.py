@@ -233,3 +233,40 @@ class AttributeJoinResult(BaseModel):
     crs: str
     left_key: str
     right_key: str
+
+
+class CoverageValidationResult(BaseModel):
+    """Successful validation checkpoint for a coverage result artifact."""
+
+    source: str
+    output: str
+    feature_count: int = Field(ge=1)
+    crs: str
+    checks: dict[str, bool]
+    passed: bool
+
+
+class GeoJsonExportResult(BaseModel):
+    """Metadata for a Web-compatible GeoJSON export."""
+
+    source: str
+    output: str
+    feature_count: int = Field(ge=0)
+    source_crs: str
+    output_crs: str
+    bounds: tuple[float, float, float, float] | None
+
+
+class CoverageReportResult(BaseModel):
+    """Summary metadata for a deterministic Markdown coverage report."""
+
+    source: str
+    output: str
+    neighborhood_count: int = Field(ge=1)
+    zero_coverage_count: int = Field(ge=0)
+    total_population: float = Field(ge=0)
+    estimated_covered_population: float = Field(ge=0)
+    population_coverage_ratio: float = Field(ge=0, le=1)
+    facility_relationship_count: int = Field(ge=0)
+    analysis_crs: str
+    export_crs: str
