@@ -19,6 +19,7 @@ from geopilot.rag.models import (
     ChunkingExperimentRun,
     ChunkingExperimentVariant,
     RetrievalEvaluationCase,
+    RetrievalMode,
 )
 from geopilot.rag.service import DEFAULT_MODEL_CACHE, KnowledgeRetriever
 from geopilot.rag.tokenization import (
@@ -97,7 +98,7 @@ def run_chunking_experiment(
 
         evaluation_started = timer()
         evaluation = evaluate_retrieval(
-            KnowledgeRetriever(store),
+            KnowledgeRetriever(store, retrieval_mode=RetrievalMode.DENSE),
             cases,
             top_k=top_k,
         )

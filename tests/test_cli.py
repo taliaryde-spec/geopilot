@@ -72,6 +72,7 @@ def test_main_without_command_prints_help(
     assert "rag-search" in captured.out
     assert "rag-evaluate" in captured.out
     assert "rag-chunk-experiment" in captured.out
+    assert "rag-retrieval-experiment" in captured.out
 
 
 def test_chunk_experiment_parser_validates_repeatable_variants() -> None:
@@ -94,6 +95,25 @@ def test_chunk_experiment_parser_validates_repeatable_variants() -> None:
         {"chunk_size": 700, "chunk_overlap": 100},
     ]
     assert arguments.token_warning_ratio == 0.75
+
+
+def test_retrieval_strategy_parser_accepts_hybrid_parameters() -> None:
+    arguments = build_parser().parse_args(
+        [
+            "rag-search",
+            "service_radius_m 是什么？",
+            "--retrieval-mode",
+            "hybrid",
+            "--hybrid-candidate-k",
+            "8",
+            "--rrf-k",
+            "30",
+        ]
+    )
+
+    assert arguments.retrieval_mode.value == "hybrid"
+    assert arguments.hybrid_candidate_k == 8
+    assert arguments.rrf_k == 30
 
 
 def test_rag_search_reports_missing_index(

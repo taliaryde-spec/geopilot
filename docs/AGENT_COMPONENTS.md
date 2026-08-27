@@ -92,6 +92,8 @@ Compiler 验证产物依赖、输出唯一性和操作参数，Dispatcher 将每
 
 Token 护栏位于 `rag/embeddings.py`、`rag/tokenization.py` 和 `rag/service.py`。`FastEmbedProvider` 克隆当前模型 tokenizer 并关闭克隆体的 truncation，以便测量完整 `title + section + text` 的原始 token 数，同时保留模型真实的 512-token 配置。正式 `rag-build` 在生成向量和写索引前统计平均、P95、最大值、80% 告警数与超限数；发现超限时返回 `embedding_input_token_limit_exceeded`。自定义 Embedding Provider 只有实现 `TokenCounter` 契约时才获得该护栏。
 
+在线默认检索由 `rag/lexical.py`、`rag/hybrid.py` 和 `rag/service.py` 组成。Dense 路径继续使用精确余弦相似度；BM25 对英文/数字/字段标识符做完整 token，对连续中文生成双字片段；两路默认各取最多 12 个候选，使用 RRF `k=60` 融合名次。归一化 RRF 分数仅用于排序，不是概率。结果同时暴露 Dense/BM25 原始分数和名次。`rag-retrieval-experiment` 固定索引、模型、Query 与 Top-K，并在预热同一 Embedding Provider 后比较两种策略。
+
 当前仅有 19 个 Chunk，选择 JSON + NumPy 是为了透明和便于测试；它不是面向百万向量、并发与增量索引的生产向量数据库。RAG 用于项目规则和字段知识，不代替数据检查或 GIS 数值计算。
 
 ### 8. 检索评估
@@ -189,3 +191,18 @@ GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和�
 - 证据：`docs/evaluations/RAG_TOKEN_AWARE_CHUNKING_V1.md`。
 - 局限：80% 是工程告警阈值而非模型规则；当前分块边界仍按字符生成，只是在 Embedding 前用 token 做测量和阻断。
 - 下一步：固定默认 Chunk 与黄金集，实现稠密向量 + BM25 的 Hybrid Search 对照实验。
+
+### 2026-08-27：BM25 + Dense Hybrid Search V1
+
+- 实现：新增纯 Python `BM25Index`、中文双字/字段标识符 tokenizer、`HybridSearcher` 和 RRF 融合；不增加第三方检索依赖。
+- 调用链：`search_knowledge` → `KnowledgeRetriever` → Dense 与 BM25 双路候选 → RRF → 带引用和两路排名的 Top-K。
+- 参数：默认在线模式 `hybrid`，`hybrid_candidate_k=12`、`rrf_k=60`；CLI 可切回 `dense`。
+- 真实对照：10 条 Query、Top-3 下 Recall 均为 1.0；MRR 从 0.90 升至 0.95，NDCG 从 0.9262 升至 0.9631。
+- Query 变化：`metric_crs`、`missing_feasibility_layers` 从第 2 升至第 1；`service_radius_field` 从第 1 降至第 2；其余 7 条不变。
+- 单次耗时：预热后 Dense 85.72ms、Hybrid 88.96ms；单次本机结果受负载影响，不作为稳定 SLA。
+- 取舍：采用 RRF 是因为余弦与 BM25 分数不可直接相加；当前聚合排序指标改善且无召回退化，因此切换默认，但明确保留单 Query 退化证据。
+- 测试：覆盖中文/标识符分词、BM25 排序、Dense 错排时 Hybrid 恢复、RRF 可解释字段、对照指标和 Agent 工具兼容；全项目 146 项测试通过。
+- 真实 Agent：DeepSeek 通过默认 `search_knowledge` 回答 EPSG:4326 距离问题，返回 CRS、缓冲与输出章节引用，且未误调用数据检查或空间分析工具。
+- 证据：`docs/evaluations/RAG_HYBRID_SEARCH_V1.md`。
+- 局限：当前 BM25 在查询时扫描 19 个 Chunk，没有持久化倒排索引；中文双字切分不等于专业分词；黄金集过小且大多只有一个正例。
+- 下一步：先扩充困难负例、多正例和词汇错配 Query，再以候选池 + Cross-Encoder 方式评估 Rerank。

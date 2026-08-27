@@ -16,6 +16,7 @@ from geopilot.rag.models import (
     KnowledgeChunk,
     KnowledgeSearchHit,
     KnowledgeSearchResult,
+    RetrievalMode,
     StoredVectorIndex,
     VectorIndexManifest,
 )
@@ -188,12 +189,15 @@ class LocalVectorStore:
                 citation=chunk.citation,
                 text=chunk.text,
                 score=max(-1.0, min(1.0, score)),
+                dense_score=max(-1.0, min(1.0, score)),
+                dense_rank=rank,
             )
-            for score, chunk in ranked[:top_k]
+            for rank, (score, chunk) in enumerate(ranked[:top_k], start=1)
         ]
         return KnowledgeSearchResult(
             query=cleaned_query,
             model_name=index.manifest.model_name,
+            retrieval_mode=RetrievalMode.DENSE,
             hits=hits,
         )
 

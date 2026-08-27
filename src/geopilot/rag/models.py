@@ -1,6 +1,7 @@
 """Validated contracts for GeoPilot retrieval-augmented generation."""
 
 from datetime import datetime
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -101,6 +102,17 @@ class KnowledgeSearchHit(BaseModel):
     citation: str
     text: str
     score: float = Field(ge=-1.0, le=1.0)
+    dense_score: float | None = Field(default=None, ge=-1.0, le=1.0)
+    bm25_score: float | None = Field(default=None, ge=0)
+    dense_rank: int | None = Field(default=None, ge=1)
+    bm25_rank: int | None = Field(default=None, ge=1)
+
+
+class RetrievalMode(StrEnum):
+    """Supported first-stage knowledge retrieval strategies."""
+
+    DENSE = "dense"
+    HYBRID = "hybrid"
 
 
 class KnowledgeSearchResult(BaseModel):
@@ -108,6 +120,7 @@ class KnowledgeSearchResult(BaseModel):
 
     query: str = Field(min_length=1)
     model_name: str
+    retrieval_mode: RetrievalMode = RetrievalMode.DENSE
     hits: list[KnowledgeSearchHit]
 
 
@@ -164,6 +177,34 @@ class RetrievalEvaluationResult(BaseModel):
     mean_reciprocal_rank: float = Field(ge=0, le=1)
     mean_ndcg_at_k: float = Field(ge=0, le=1)
     cases: list[RetrievalCaseResult] = Field(min_length=1)
+
+
+class RetrievalExperimentRun(BaseModel):
+    """Evaluation metrics and duration for one retrieval strategy."""
+
+    retrieval_mode: RetrievalMode
+    duration_ms: float = Field(ge=0)
+    evaluation: RetrievalEvaluationResult
+
+
+class RetrievalExperimentResult(BaseModel):
+    """Dense and hybrid runs evaluated under shared retrieval settings."""
+
+    index_path: str
+    model_name: str = Field(min_length=1)
+    top_k: int = Field(ge=1)
+    case_count: int = Field(ge=1)
+    hybrid_candidate_k: int = Field(ge=1, le=20)
+    rrf_k: int = Field(ge=1)
+    hit_rate_delta: float = Field(ge=-1, le=1)
+    precision_delta: float = Field(ge=-1, le=1)
+    recall_delta: float = Field(ge=-1, le=1)
+    mrr_delta: float = Field(ge=-1, le=1)
+    ndcg_delta: float = Field(ge=-1, le=1)
+    improved_case_count: int = Field(ge=0)
+    regressed_case_count: int = Field(ge=0)
+    unchanged_case_count: int = Field(ge=0)
+    runs: list[RetrievalExperimentRun] = Field(min_length=2)
 
 
 class ChunkingExperimentVariant(BaseModel):

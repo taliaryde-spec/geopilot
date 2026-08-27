@@ -237,7 +237,7 @@ uv run geopilot rag-search "为什么不能在 EPSG:4326 中直接做米制缓�
 uv run geopilot rag-evaluate knowledge/retrieval_cases.json --top-k 3
 ```
 
-当前 10 条 GIS 黄金样例的真实 Top-3 结果为：`Hit Rate = 1.00`、`Precision = 0.3333`、`Recall = 1.00`、`MRR = 0.90`、`NDCG = 0.9262`。标签同时指定来源、章节、正文子串和相关度等级，不只检查是否命中了同一份文档。6 条样例的历史基线见 [RAG Baseline V1](docs/evaluations/RAG_BASELINE_V1.md)，参数选择过程见 [Chunking Experiment V1](docs/evaluations/RAG_CHUNK_EXPERIMENT_V1.md)，真实 tokenizer 结果见 [Token-aware Chunking V1](docs/evaluations/RAG_TOKEN_AWARE_CHUNKING_V1.md)。
+默认检索现为 Dense + BM25 + RRF 的 Hybrid Search。当前 10 条 GIS 黄金样例的真实 Top-3 结果为：`Hit Rate = 1.00`、`Precision = 0.3333`、`Recall = 1.00`、`MRR = 0.95`、`NDCG = 0.9631`。相对 Dense-only，MRR 提升 0.05、NDCG 提升 0.0369；2 条 Query 排名改善、1 条退化、7 条不变。标签同时指定来源、章节、正文子串和相关度等级，不只检查是否命中了同一份文档。完整对照见 [Hybrid Search V1](docs/evaluations/RAG_HYBRID_SEARCH_V1.md)。
 
 复现 Chunking 控制变量实验：
 
@@ -246,6 +246,14 @@ uv run geopilot rag-chunk-experiment knowledge --cases knowledge/retrieval_cases
 ```
 
 实验输出同时包含模型 token 上限、平均/P95/最大 token、最大利用率、80% 告警 Chunk 数和超限 Chunk 数。可用 `--token-warning-ratio 0.75` 调整告警线；该参数只影响风险标记，不改变模型真实的 512-token 上限。
+
+复现 Dense-only 与 Hybrid Search 对照：
+
+```powershell
+uv run geopilot rag-retrieval-experiment knowledge/retrieval_cases.json --top-k 3 --hybrid-candidate-k 12 --rrf-k 60
+```
+
+普通 `rag-search` 和 Agent 默认使用 Hybrid；可传入 `--retrieval-mode dense` 复现纯向量结果。Hybrid 输出中的 `score` 是归一化 RRF 分数，不是概率；`dense_score`、`bm25_score`、`dense_rank` 和 `bm25_rank` 用于解释两路召回。
 
 后续大模型学习和面试准备以 [GeoPilot 大模型学习与面试主线](docs/LLM_LEARNING_PATH.md) 为统一入口；每个阶段必须同时交付原理、代码、测试、真实实验、技术取舍、面试回答和诚实的简历描述。
 

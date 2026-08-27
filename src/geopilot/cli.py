@@ -32,18 +32,23 @@ from geopilot.rag import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_CHUNKING_VARIANTS,
     DEFAULT_EMBEDDING_MODEL,
+    DEFAULT_HYBRID_CANDIDATE_K,
     DEFAULT_KNOWLEDGE_INDEX,
     DEFAULT_MODEL_CACHE,
+    DEFAULT_RETRIEVAL_MODE,
+    DEFAULT_RRF_K,
     DEFAULT_TOKEN_WARNING_RATIO,
     ChunkingExperimentVariant,
     EmbeddingError,
     KnowledgeLoadError,
+    RetrievalMode,
     VectorStoreError,
     build_knowledge_index,
     evaluate_retrieval,
     load_evaluation_cases,
     open_knowledge_retriever,
     run_chunking_experiment,
+    run_retrieval_experiment,
 )
 from geopilot.tools.csv_point_loader import CsvPointLoadError
 from geopilot.workflows.dataset_intake import inspect_and_validate_dataset
@@ -217,6 +222,7 @@ def build_parser() -> argparse.ArgumentParser:
     rag_search_parser.add_argument("query", help="Knowledge retrieval query.")
     _add_rag_index_arguments(rag_search_parser, include_model=False)
     rag_search_parser.add_argument("--top-k", type=int, default=4)
+    _add_retrieval_strategy_arguments(rag_search_parser)
 
     rag_evaluate_parser = subparsers.add_parser(
         "rag-evaluate",
@@ -229,6 +235,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_rag_index_arguments(rag_evaluate_parser, include_model=False)
     rag_evaluate_parser.add_argument("--top-k", type=int, default=4)
+    _add_retrieval_strategy_arguments(rag_evaluate_parser)
+
+    retrieval_experiment_parser = subparsers.add_parser(
+        "rag-retrieval-experiment",
+        help="Compare Dense-only and BM25 + Dense Hybrid Search.",
+    )
+    retrieval_experiment_parser.add_argument(
+        "cases",
+        type=Path,
+        help="JSON retrieval evaluation cases shared by both modes.",
+    )
+    _add_rag_index_arguments(retrieval_experiment_parser, include_model=False)
+    retrieval_experiment_parser.add_argument("--top-k", type=int, default=3)
+    retrieval_experiment_parser.add_argument(
+        "--hybrid-candidate-k",
+        type=int,
+        default=DEFAULT_HYBRID_CANDIDATE_K,
+    )
+    retrieval_experiment_parser.add_argument(
+        "--rrf-k",
+        type=int,
+        default=DEFAULT_RRF_K,
+    )
 
     chunk_experiment_parser = subparsers.add_parser(
         "rag-chunk-experiment",
@@ -292,6 +321,22 @@ def _parse_chunking_variant(value: str) -> ChunkingExperimentVariant:
         )
     except ValueError as error:
         raise argparse.ArgumentTypeError(str(error)) from error
+
+
+def _add_retrieval_strategy_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add Dense/Hybrid selection and shared Hybrid tuning parameters."""
+    parser.add_argument(
+        "--retrieval-mode",
+        type=RetrievalMode,
+        choices=list(RetrievalMode),
+        default=DEFAULT_RETRIEVAL_MODE,
+    )
+    parser.add_argument(
+        "--hybrid-candidate-k",
+        type=int,
+        default=DEFAULT_HYBRID_CANDIDATE_K,
+    )
+    parser.add_argument("--rrf-k", type=int, default=DEFAULT_RRF_K)
 
 
 def _add_plans_directory_argument(parser: argparse.ArgumentParser) -> None:
@@ -601,12 +646,18 @@ def _run_rag_search(
     index_path: Path,
     model_cache: Path,
     top_k: int,
+    retrieval_mode: RetrievalMode,
+    hybrid_candidate_k: int,
+    rrf_k: int,
 ) -> int:
     """Query a local vector index and print ranked citation evidence."""
     try:
         result = open_knowledge_retriever(
             index_path=index_path,
             cache_directory=model_cache,
+            retrieval_mode=retrieval_mode,
+            hybrid_candidate_k=hybrid_candidate_k,
+            rrf_k=rrf_k,
         ).search(query, top_k=top_k)
     except (
         EmbeddingError,
@@ -627,17 +678,55 @@ def _run_rag_evaluate(
     index_path: Path,
     model_cache: Path,
     top_k: int,
+    retrieval_mode: RetrievalMode,
+    hybrid_candidate_k: int,
+    rrf_k: int,
 ) -> int:
     """Run an offline retrieval evaluation against the local index."""
     try:
         retriever = open_knowledge_retriever(
             index_path=index_path,
             cache_directory=model_cache,
+            retrieval_mode=retrieval_mode,
+            hybrid_candidate_k=hybrid_candidate_k,
+            rrf_k=rrf_k,
         )
         result = evaluate_retrieval(
             retriever,
             load_evaluation_cases(cases_path),
             top_k=top_k,
+        )
+    except (
+        EmbeddingError,
+        VectorStoreError,
+        OSError,
+        RuntimeError,
+        ValueError,
+    ) as error:
+        _print_error(_rag_error_code(error), str(error))
+        return EXIT_RAG_ERROR
+    print(result.model_dump_json(indent=2))
+    return EXIT_SUCCESS
+
+
+def _run_rag_retrieval_experiment(
+    cases_path: Path,
+    *,
+    index_path: Path,
+    model_cache: Path,
+    top_k: int,
+    hybrid_candidate_k: int,
+    rrf_k: int,
+) -> int:
+    """Compare Dense-only and Hybrid Search under shared settings."""
+    try:
+        result = run_retrieval_experiment(
+            index_path,
+            load_evaluation_cases(cases_path),
+            cache_directory=model_cache,
+            top_k=top_k,
+            hybrid_candidate_k=hybrid_candidate_k,
+            rrf_k=rrf_k,
         )
     except (
         EmbeddingError,
@@ -751,6 +840,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             index_path=arguments.index_path,
             model_cache=arguments.model_cache,
             top_k=arguments.top_k,
+            retrieval_mode=arguments.retrieval_mode,
+            hybrid_candidate_k=arguments.hybrid_candidate_k,
+            rrf_k=arguments.rrf_k,
         )
     if arguments.command == "rag-evaluate":
         return _run_rag_evaluate(
@@ -758,6 +850,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             index_path=arguments.index_path,
             model_cache=arguments.model_cache,
             top_k=arguments.top_k,
+            retrieval_mode=arguments.retrieval_mode,
+            hybrid_candidate_k=arguments.hybrid_candidate_k,
+            rrf_k=arguments.rrf_k,
+        )
+    if arguments.command == "rag-retrieval-experiment":
+        return _run_rag_retrieval_experiment(
+            arguments.cases,
+            index_path=arguments.index_path,
+            model_cache=arguments.model_cache,
+            top_k=arguments.top_k,
+            hybrid_candidate_k=arguments.hybrid_candidate_k,
+            rrf_k=arguments.rrf_k,
         )
     if arguments.command == "rag-chunk-experiment":
         return _run_rag_chunk_experiment(

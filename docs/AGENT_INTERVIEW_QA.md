@@ -182,7 +182,7 @@ RAG 语料和黄金集小，只支持 Markdown/TXT，Chunk 按字符而不是 to
 
 ### 40. 如何证明 RAG 不是孤立的演示脚本，而是真正接入了 Agent？
 
-我做了三层验证。第一层是检索器单元测试，验证切块、Embedding、排序和引用；第二层是黄金集评估，记录 Recall、MRR 和 NDCG；第三层是使用真实 DeepSeek 模型运行 `geopilot agent`，让模型自主调用 `search_knowledge` 回答公共设施候选选址问题。实际响应引用了新增的选址知识，正确说明候选点不能直接作为最终建设位置以及缺失的可行性数据，同时没有误调用空间分析工具。这证明了真实链路是“LLM 决策 → Function Calling → RAG → 引用回答”，而不是在测试代码中直接调用检索函数。
+我做了三层验证。第一层是检索器单元测试，验证切块、Embedding、Dense/BM25/RRF 排序和引用；第二层是黄金集评估，记录 Recall、MRR 和 NDCG；第三层是使用真实 DeepSeek 模型运行 `geopilot agent`，让模型自主调用 `search_knowledge`。Dense 阶段验证过公共设施候选选址，切换默认 Hybrid 后又验证了 EPSG:4326 距离问题；实际响应返回稳定章节引用，同时没有误调用空间分析工具。这证明了真实链路是“LLM 决策 → Function Calling → Hybrid RAG → 引用回答”，而不是在测试代码中直接调用检索函数。
 
 ### 41. 你如何发现 Embedding 输入被静默截断？
 
@@ -192,9 +192,29 @@ RAG 语料和黄金集小，只支持 Markdown/TXT，Chunk 按字符而不是 to
 
 512 是模型的硬上限，超过后输入会被截断；80% 是 GeoPilot 可配置的工程预警线，默认对应 410 token，用于提前暴露余量不足。`500/80` 的最大输入是 443 token，因而有 3 个告警但没有超限，可以建库；任何大于 512 的输入则会在 Embedding 和写索引前直接失败。告警阈值不是模型能力声明，也不能消除后续语料增长带来的风险。
 
+### 43. 为什么 GeoPilot 要做 Hybrid Search？
+
+Dense Embedding 擅长语义近似，但字段名、EPSG 编号和专业术语需要精确匹配；BM25 正好补足这类词法信号。GeoPilot 同时召回 Dense 与 BM25 候选后用 RRF 融合。在固定 10 条 Query 上 Recall 都是 1.0，但 Hybrid 把 MRR 从 0.90 提升到 0.95、NDCG 从 0.9262 提升到 0.9631，所以有量化依据切换默认。
+
+### 44. 为什么不能直接把余弦分数和 BM25 分数加权相加？
+
+余弦分数通常在 -1 到 1，BM25 分数非负且上界随语料、词频变化，两者量纲和分布不同，直接相加需要额外归一化且对语料变化敏感。RRF 只使用每路排名，公式为各路 `1 / (k + rank)` 之和，对原始分数尺度不敏感。GeoPilot 使用 `k=60`，再除以理论最大值把展示分数归一化到 0～1；这个分数不是概率。
+
+### 45. 中文 BM25 怎么分词？为什么没直接用 Jieba？
+
+当前知识库只有 19 个 Chunk，为保持依赖少、算法透明，GeoPilot 使用 Unicode NFKC 和小写归一化：英文、数字、`service_radius_m`、`EPSG:4326` 等标识符整体保留，连续中文生成双字片段。它不需要领域词典且能覆盖精确短语，但索引更大、语义边界不如专业分词。语料扩大后应对比 Jieba、IK 或搜索引擎 analyzer，而不是把当前方案称为生产级中文检索。
+
+### 46. Hybrid 是否每条 Query 都更好？
+
+不是。真实对照中 2 条排名改善、7 条不变，但 `service_radius_field` 从第 1 降到第 2。聚合 MRR/NDCG 改善且 Recall 没下降，所以当前默认采用 Hybrid；报告仍保留单条退化，后续困难集和 Rerank 需要重点检查这类精确字段问题。不能只汇报平均数隐藏回归。
+
+### 47. 当前 BM25 为什么没有单独持久化索引？
+
+当前只有 19 个 Chunk，`KnowledgeRetriever` 首次 Hybrid 查询时从已有 JSON 向量索引构建内存 BM25，工程上更透明且足够快。复杂度仍是小语料可接受的扫描/内存统计，不支持并发、多副本、增量更新和百万文档。规模扩大时会把词法索引迁移到 Elasticsearch/OpenSearch 或支持稀疏检索的向量数据库。
+
 ## 九、简历描述草案
 
-实现自然语言驱动的 GeoPilot GIS Agent：设计 Provider-neutral LLM 适配、Pydantic Function Calling、结构化规划与人工审批，使用确定性 GeoPandas Workflow 完成 13 步覆盖分析并支持失败检查点恢复；构建本地引用型 RAG，采用 Markdown 结构感知切块、BGE 中文 Embedding 与同 tokenizer 截断护栏，实现 Chunk 参数控制变量实验及 Precision/Recall/MRR/NDCG 黄金评估，在 10 条演示样例上取得 Recall@3 1.0、MRR 0.90、NDCG@3 0.9262，并明确小样本边界。
+实现自然语言驱动的 GeoPilot GIS Agent：设计 Provider-neutral LLM 适配、Pydantic Function Calling、结构化规划与人工审批，使用确定性 GeoPandas Workflow 完成 13 步覆盖分析并支持失败检查点恢复；构建本地引用型 RAG，采用结构感知切块、BGE 中文 Embedding、同 tokenizer 截断护栏及 BM25 + Dense + RRF 混合检索，在 10 条演示样例上取得 Recall@3 1.0、MRR 0.95、NDCG@3 0.9631，并保留小样本与单 Query 退化边界。
 
 ## 迭代记录
 
@@ -221,3 +241,11 @@ RAG 语料和黄金集小，只支持 Markdown/TXT，Chunk 按字符而不是 to
 - 用真实 BGE tokenizer 证明 `500/80` 无超限，而 700/900 各有 2 个超限 Chunk。
 - 真实 CLI 失败路径返回退出码 11 且不创建索引；安全默认值成功重建主索引。
 - 面试回答明确区分字符分块、token 测量、工程告警和模型硬限制。
+
+### 2026-08-27：Hybrid Search V1
+
+- 新增 Dense/BM25 互补、RRF 原理、中文分词、单 Query 退化和索引规模边界相关问答。
+- 简历草案更新为真实 Hybrid 指标，不使用教程示例或虚构提升数据。
+- 真实 DeepSeek Agent 已通过默认 Hybrid 路径回答 CRS 问题并保持工具边界。
+- 全项目 146 项自动化测试通过。
+- 下一轮面试准备聚焦困难负例设计、候选池大小和是否需要 Cross-Encoder Rerank。

@@ -23,8 +23,8 @@ GeoPilot 后续大模型部分以[卡码大模型学习路线](https://notes.kam
 | Prompt 与模型调用 | `agent/prompts.py`、模型适配器、Pydantic Tool Schema | 基础闭环完成 | Prompt 版本、结构化输出失败率、token/延迟统计 |
 | Function Calling | Tool Registry、数据检查、CRS、计划提交、知识检索 | 已实测 | DeepSeek 多轮工具调用、错误纠正轨迹 |
 | RAG 离线链路 | 文档加载、结构感知切块、同模型 tokenizer 检查、Embedding、索引 | 第一版完成 | 3 文档、19 chunks、512 维索引；超限构建前失败 |
-| RAG 在线链路 | Query Embedding、余弦检索、引用、Agent 工具 | 第一版完成 | 章节级检索 baseline |
-| RAG 优化 | Query 改写、混合检索、Rerank、Context 压缩 | 未开始 | 每次只改变一个变量的对照实验 |
+| RAG 在线链路 | Query Embedding、Dense + BM25、RRF、引用、Agent 工具 | Hybrid 第一版完成 | Dense/Hybrid 对照与章节级黄金集 |
+| RAG 优化 | 混合检索已完成；Query 改写、Rerank、Context 压缩待评估 | 进行中 | 每次只改变一个变量的对照实验 |
 | RAG 评估 | Precision、Recall、MRR、NDCG | 检索侧第一版完成 | `docs/evaluations/RAG_BASELINE_V1.md` |
 | Agent 设计 | LLM 决策 + 确定性 Workflow + 人工审批 | 核心闭环完成 | 任务成功率、死循环与权限边界评估 |
 | Memory | 工作记忆、任务记忆、长期偏好 | 待开始 | 写入策略、遗忘、隐私和检索评估 |
@@ -40,8 +40,8 @@ GeoPilot 后续大模型部分以[卡码大模型学习路线](https://notes.kam
 2. 已完成：章节与正文片段级黄金标签，Precision@K、Recall@K、MRR、NDCG@K。
 3. 已完成：固定 Embedding 和知识库，对比四组 chunk size/overlap，选择 `500/80`。
 4. 已完成：用 BGE 的真实 tokenizer 统计完整 Embedding 输入，并在正式建库前拒绝超限 Chunk。
-5. 下一步：加入关键词检索，与稠密向量组成 Hybrid Search。
-6. 然后：在同一评估集上验证是否需要 Rerank，而不是因为“热门”就添加。
+5. 已完成：加入透明 BM25 关键词检索，用 RRF 与 Dense 融合；默认 Hybrid 在当前小样本上改善 MRR/NDCG。
+6. 下一步：扩充包含歧义和困难负例的黄金集，再验证是否需要 Rerank，而不是因为“热门”就添加。
 7. 最后：增加回答忠实度、答案相关性、引用正确率和拒答评估。
 
 ## 主要参考

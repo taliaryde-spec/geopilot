@@ -18,6 +18,18 @@ from geopilot.rag.experiment import (
     DEFAULT_CHUNKING_VARIANTS,
     run_chunking_experiment,
 )
+from geopilot.rag.hybrid import (
+    DEFAULT_HYBRID_CANDIDATE_K,
+    DEFAULT_RRF_K,
+    HybridSearcher,
+)
+from geopilot.rag.lexical import (
+    DEFAULT_BM25_B,
+    DEFAULT_BM25_K1,
+    BM25Index,
+    BM25SearchHit,
+    tokenize_for_bm25,
+)
 from geopilot.rag.loader import (
     KnowledgeLoadError,
     KnowledgeLoadErrorCode,
@@ -38,13 +50,18 @@ from geopilot.rag.models import (
     RetrievalCaseResult,
     RetrievalEvaluationCase,
     RetrievalEvaluationResult,
+    RetrievalExperimentResult,
+    RetrievalExperimentRun,
+    RetrievalMode,
     StoredVectorIndex,
     TokenUsageStatistics,
     VectorIndexManifest,
 )
+from geopilot.rag.retrieval_experiment import run_retrieval_experiment
 from geopilot.rag.service import (
     DEFAULT_KNOWLEDGE_INDEX,
     DEFAULT_MODEL_CACHE,
+    DEFAULT_RETRIEVAL_MODE,
     KnowledgeRetriever,
     build_knowledge_index,
     open_knowledge_retriever,
@@ -60,13 +77,20 @@ from geopilot.rag.vector_store import (
 )
 
 __all__ = [
+    "DEFAULT_BM25_B",
+    "DEFAULT_BM25_K1",
     "DEFAULT_CHUNKING_VARIANTS",
     "DEFAULT_CHUNK_OVERLAP",
     "DEFAULT_CHUNK_SIZE",
     "DEFAULT_EMBEDDING_MODEL",
+    "DEFAULT_HYBRID_CANDIDATE_K",
     "DEFAULT_KNOWLEDGE_INDEX",
     "DEFAULT_MODEL_CACHE",
+    "DEFAULT_RETRIEVAL_MODE",
+    "DEFAULT_RRF_K",
     "DEFAULT_TOKEN_WARNING_RATIO",
+    "BM25Index",
+    "BM25SearchHit",
     "ChunkingExperimentResult",
     "ChunkingExperimentRun",
     "ChunkingExperimentVariant",
@@ -74,6 +98,7 @@ __all__ = [
     "EmbeddingErrorCode",
     "EmbeddingProvider",
     "FastEmbedProvider",
+    "HybridSearcher",
     "IndexedKnowledgeChunk",
     "KnowledgeBuildResult",
     "KnowledgeChunk",
@@ -88,6 +113,9 @@ __all__ = [
     "RetrievalCaseResult",
     "RetrievalEvaluationCase",
     "RetrievalEvaluationResult",
+    "RetrievalExperimentResult",
+    "RetrievalExperimentRun",
+    "RetrievalMode",
     "StoredVectorIndex",
     "TokenCounter",
     "TokenUsageStatistics",
@@ -102,5 +130,7 @@ __all__ = [
     "load_knowledge_documents",
     "open_knowledge_retriever",
     "run_chunking_experiment",
+    "run_retrieval_experiment",
     "summarize_token_usage",
+    "tokenize_for_bm25",
 ]

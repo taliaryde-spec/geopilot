@@ -10,12 +10,15 @@ from geopilot.rag.chunker import chunk_knowledge_documents
 from geopilot.rag.embeddings import EmbeddingError, EmbeddingErrorCode
 from geopilot.rag.evaluation import evaluate_retrieval, load_evaluation_cases
 from geopilot.rag.experiment import run_chunking_experiment
+from geopilot.rag.lexical import BM25Index, tokenize_for_bm25
 from geopilot.rag.loader import load_knowledge_document, load_knowledge_documents
 from geopilot.rag.models import (
     ChunkingExperimentVariant,
     RelevantKnowledgeTarget,
     RetrievalEvaluationCase,
+    RetrievalMode,
 )
+from geopilot.rag.retrieval_experiment import run_retrieval_experiment
 from geopilot.rag.service import (
     KnowledgeRetriever,
     build_knowledge_index,
@@ -59,6 +62,18 @@ class KeywordEmbeddingProvider:
         if any(token in text for token in ("capacity", "字段", "人口")):
             return [0.0, 1.0, 0.0]
         return [0.0, 0.0, 1.0]
+
+
+class MisleadingEmbeddingProvider(KeywordEmbeddingProvider):
+    """Ranks generic text above an exact identifier to test lexical recovery."""
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [
+            [0.0, 1.0] if "service_radius_m" in text else [1.0, 0.0] for text in texts
+        ]
+
+    def embed_query(self, query: str) -> list[float]:
+        return [1.0, 0.0]
 
 
 def _write_knowledge_files(directory: Path) -> tuple[Path, Path]:
@@ -157,6 +172,85 @@ def test_search_rejects_embedding_model_mismatch(tmp_path: Path) -> None:
     assert captured.value.code is VectorStoreErrorCode.MODEL_MISMATCH
 
 
+def test_bm25_tokenizer_preserves_identifiers_and_chinese_bigrams() -> None:
+    tokens = tokenize_for_bm25("EPSG:4326 与 service_radius_m 服务半径")
+
+    assert "epsg:4326" in tokens
+    assert "service_radius_m" in tokens
+    assert "服务" in tokens
+    assert "务半" in tokens
+    assert "半径" in tokens
+
+
+def test_hybrid_search_recovers_exact_identifier_missed_by_dense(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "generic.md").write_text(
+        "# 通用说明\n\n## 设施分析\n\n设施分析的一般背景信息。",
+        encoding="utf-8",
+    )
+    (tmp_path / "fields.md").write_text(
+        "# 数据字典\n\n## 服务半径\n\nservice_radius_m 表示设施服务半径。",
+        encoding="utf-8",
+    )
+    index_path = tmp_path / "index.json"
+    provider = MisleadingEmbeddingProvider()
+    build_knowledge_index(
+        [tmp_path],
+        index_path=index_path,
+        embedding_provider=provider,
+        working_directory=tmp_path,
+    )
+
+    dense = open_knowledge_retriever(
+        index_path=index_path,
+        embedding_provider=provider,
+        retrieval_mode=RetrievalMode.DENSE,
+    ).search("service_radius_m 字段是什么？", top_k=1)
+    hybrid = open_knowledge_retriever(
+        index_path=index_path,
+        embedding_provider=provider,
+        retrieval_mode=RetrievalMode.HYBRID,
+        hybrid_candidate_k=2,
+    ).search("service_radius_m 字段是什么？", top_k=1)
+
+    assert dense.hits[0].source == "generic.md"
+    assert hybrid.retrieval_mode is RetrievalMode.HYBRID
+    assert hybrid.hits[0].source == "fields.md"
+    assert hybrid.hits[0].dense_rank == 2
+    assert hybrid.hits[0].bm25_rank == 1
+    assert hybrid.hits[0].bm25_score is not None
+
+
+def test_bm25_scores_exact_identifier_above_unmatched_chunk(tmp_path: Path) -> None:
+    (tmp_path / "generic.md").write_text("# 通用\n\n普通信息", encoding="utf-8")
+    (tmp_path / "fields.md").write_text(
+        "# 字段\n\nservice_radius_m 表示服务半径。",
+        encoding="utf-8",
+    )
+    index_path = tmp_path / "index.json"
+    provider = KeywordEmbeddingProvider()
+    build_knowledge_index(
+        [tmp_path],
+        index_path=index_path,
+        embedding_provider=provider,
+        working_directory=tmp_path,
+    )
+    stored = LocalVectorStore(index_path, provider).load()
+
+    hits = BM25Index(stored.chunks).search("service_radius_m", top_k=2)
+
+    assert len(hits) == 1
+    assert (
+        next(
+            chunk.source
+            for chunk in stored.chunks
+            if chunk.chunk_id == hits[0].chunk_id
+        )
+        == "fields.md"
+    )
+
+
 def test_index_build_rejects_embedding_inputs_above_token_limit(
     tmp_path: Path,
 ) -> None:
@@ -190,7 +284,10 @@ def test_retrieval_evaluation_calculates_ranking_metrics(tmp_path: Path) -> None
         embedding_provider=provider,
         working_directory=tmp_path,
     )
-    retriever = KnowledgeRetriever(LocalVectorStore(index_path, provider))
+    retriever = KnowledgeRetriever(
+        LocalVectorStore(index_path, provider),
+        retrieval_mode=RetrievalMode.DENSE,
+    )
     cases = [
         RetrievalEvaluationCase(
             case_id="metric_crs",
@@ -239,7 +336,10 @@ def test_retrieval_evaluation_discounts_a_rank_two_result(tmp_path: Path) -> Non
         embedding_provider=provider,
         working_directory=tmp_path,
     )
-    retriever = KnowledgeRetriever(LocalVectorStore(index_path, provider))
+    retriever = KnowledgeRetriever(
+        LocalVectorStore(index_path, provider),
+        retrieval_mode=RetrievalMode.DENSE,
+    )
     query = "没有关键词的查询"
     expected_hit = retriever.search(query, top_k=2).hits[1]
     cases = [
@@ -277,7 +377,10 @@ def test_retrieval_evaluation_uses_graded_relevance_for_ndcg(tmp_path: Path) -> 
         embedding_provider=provider,
         working_directory=tmp_path,
     )
-    retriever = KnowledgeRetriever(LocalVectorStore(index_path, provider))
+    retriever = KnowledgeRetriever(
+        LocalVectorStore(index_path, provider),
+        retrieval_mode=RetrievalMode.DENSE,
+    )
     query = "没有关键词的查询"
     ranked_hits = retriever.search(query, top_k=2).hits
     cases = [
@@ -461,3 +564,50 @@ def test_chunking_experiment_rejects_mismatched_tokenizer_model(
             token_counter=KeywordEmbeddingProvider("other-model"),
             working_directory=tmp_path,
         )
+
+
+def test_retrieval_experiment_compares_dense_and_hybrid(tmp_path: Path) -> None:
+    (tmp_path / "generic.md").write_text(
+        "# 通用\n\n普通设施说明。",
+        encoding="utf-8",
+    )
+    (tmp_path / "fields.md").write_text(
+        "# 字段\n\nservice_radius_m 表示设施服务半径。",
+        encoding="utf-8",
+    )
+    index_path = tmp_path / "index.json"
+    provider = MisleadingEmbeddingProvider()
+    build_knowledge_index(
+        [tmp_path],
+        index_path=index_path,
+        embedding_provider=provider,
+        working_directory=tmp_path,
+    )
+    cases = [
+        RetrievalEvaluationCase(
+            case_id="service_radius",
+            query="service_radius_m 字段是什么？",
+            relevant_targets=[
+                RelevantKnowledgeTarget(source="fields.md", section="字段")
+            ],
+        )
+    ]
+
+    result = run_retrieval_experiment(
+        index_path,
+        cases,
+        embedding_provider=provider,
+        top_k=1,
+        hybrid_candidate_k=2,
+    )
+
+    assert [run.retrieval_mode for run in result.runs] == [
+        RetrievalMode.DENSE,
+        RetrievalMode.HYBRID,
+    ]
+    assert result.runs[0].evaluation.mean_recall_at_k == 0.0
+    assert result.runs[1].evaluation.mean_recall_at_k == 1.0
+    assert result.recall_delta == 1.0
+    assert result.improved_case_count == 1
+    assert result.regressed_case_count == 0
+    assert result.unchanged_case_count == 0

@@ -16,22 +16,51 @@ from geopilot.rag.embeddings import (
     FastEmbedProvider,
     TokenCounter,
 )
+from geopilot.rag.hybrid import (
+    DEFAULT_HYBRID_CANDIDATE_K,
+    DEFAULT_RRF_K,
+    HybridSearcher,
+)
 from geopilot.rag.loader import load_knowledge_documents
-from geopilot.rag.models import KnowledgeBuildResult, KnowledgeSearchResult
+from geopilot.rag.models import (
+    KnowledgeBuildResult,
+    KnowledgeSearchResult,
+    RetrievalMode,
+)
 from geopilot.rag.tokenization import summarize_token_usage
 from geopilot.rag.vector_store import LocalVectorStore
 
 DEFAULT_KNOWLEDGE_INDEX = Path("artifacts") / "rag" / "index.json"
 DEFAULT_MODEL_CACHE = Path("artifacts") / "models" / "fastembed"
+DEFAULT_RETRIEVAL_MODE = RetrievalMode.HYBRID
 
 
 class KnowledgeRetriever:
     """Small application-facing facade around the local vector store."""
 
-    def __init__(self, store: LocalVectorStore) -> None:
+    def __init__(
+        self,
+        store: LocalVectorStore,
+        *,
+        retrieval_mode: RetrievalMode = DEFAULT_RETRIEVAL_MODE,
+        hybrid_candidate_k: int = DEFAULT_HYBRID_CANDIDATE_K,
+        rrf_k: int = DEFAULT_RRF_K,
+    ) -> None:
         self._store = store
+        self._retrieval_mode = retrieval_mode
+        self._hybrid_searcher = HybridSearcher(
+            store,
+            candidate_k=hybrid_candidate_k,
+            rrf_k=rrf_k,
+        )
+
+    @property
+    def retrieval_mode(self) -> RetrievalMode:
+        return self._retrieval_mode
 
     def search(self, query: str, *, top_k: int = 4) -> KnowledgeSearchResult:
+        if self._retrieval_mode is RetrievalMode.HYBRID:
+            return self._hybrid_searcher.search(query, top_k=top_k)
         return self._store.search(query, top_k=top_k)
 
 
@@ -84,11 +113,19 @@ def open_knowledge_retriever(
     index_path: str | Path = DEFAULT_KNOWLEDGE_INDEX,
     cache_directory: str | Path = DEFAULT_MODEL_CACHE,
     embedding_provider: EmbeddingProvider | None = None,
+    retrieval_mode: RetrievalMode = DEFAULT_RETRIEVAL_MODE,
+    hybrid_candidate_k: int = DEFAULT_HYBRID_CANDIDATE_K,
+    rrf_k: int = DEFAULT_RRF_K,
 ) -> KnowledgeRetriever:
     """Open an existing index with its recorded embedding model."""
     selected_path = Path(index_path)
     if embedding_provider is not None:
-        return KnowledgeRetriever(LocalVectorStore(selected_path, embedding_provider))
+        return KnowledgeRetriever(
+            LocalVectorStore(selected_path, embedding_provider),
+            retrieval_mode=retrieval_mode,
+            hybrid_candidate_k=hybrid_candidate_k,
+            rrf_k=rrf_k,
+        )
     manifest = (
         LocalVectorStore(
             selected_path,
@@ -104,4 +141,9 @@ def open_knowledge_retriever(
         manifest.model_name,
         cache_directory=cache_directory,
     )
-    return KnowledgeRetriever(LocalVectorStore(selected_path, provider))
+    return KnowledgeRetriever(
+        LocalVectorStore(selected_path, provider),
+        retrieval_mode=retrieval_mode,
+        hybrid_candidate_k=hybrid_candidate_k,
+        rrf_k=rrf_k,
+    )
