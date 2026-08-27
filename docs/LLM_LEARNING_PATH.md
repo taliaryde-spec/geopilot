@@ -23,9 +23,9 @@ GeoPilot 后续大模型部分以[卡码大模型学习路线](https://notes.kam
 | Prompt 与模型调用 | `agent/prompts.py`、模型适配器、Pydantic Tool Schema | 基础闭环完成 | Prompt 版本、结构化输出失败率、token/延迟统计 |
 | Function Calling | Tool Registry、数据检查、CRS、计划提交、知识检索 | 已实测 | DeepSeek 多轮工具调用、错误纠正轨迹 |
 | RAG 离线链路 | 文档加载、结构感知切块、同模型 tokenizer 检查、Embedding、索引 | 第一版完成 | 3 文档、19 chunks、512 维索引；超限构建前失败 |
-| RAG 在线链路 | Query Embedding、Dense + BM25、RRF、引用、Agent 工具 | Hybrid 第一版完成 | Dense/Hybrid 对照与章节级黄金集 |
-| RAG 优化 | 混合检索已完成；Query 改写、Rerank、Context 压缩待评估 | 进行中 | 每次只改变一个变量的对照实验 |
-| RAG 评估 | Precision、Recall、MRR、NDCG | 检索侧第一版完成 | `docs/evaluations/RAG_BASELINE_V1.md` |
+| RAG 在线链路 | Query Embedding、Dense + BM25、RRF、可选 Cross-Encoder、引用、Agent 工具 | 检索侧完成 | Dense/Hybrid/Rerank 对照与章节级黄金集 |
+| RAG 优化 | 混合检索与 Rerank 已评估；Rerank 无收益故默认关闭 | 当前阶段完成 | 20 Query、24 标签的控制变量实验 |
+| RAG 评估 | Precision、Recall、MRR、NDCG | 检索侧完成 | `docs/evaluations/RAG_RERANK_V1.md` |
 | Agent 设计 | LLM 决策 + 确定性 Workflow + 人工审批 | 核心闭环完成 | 任务成功率、死循环与权限边界评估 |
 | Memory | 工作记忆、任务记忆、长期偏好 | 待开始 | 写入策略、遗忘、隐私和检索评估 |
 | MCP | 对外发布稳定 GIS 工具 | 待开始 | MCP Server、外部客户端调用测试 |
@@ -41,8 +41,10 @@ GeoPilot 后续大模型部分以[卡码大模型学习路线](https://notes.kam
 3. 已完成：固定 Embedding 和知识库，对比四组 chunk size/overlap，选择 `500/80`。
 4. 已完成：用 BGE 的真实 tokenizer 统计完整 Embedding 输入，并在正式建库前拒绝超限 Chunk。
 5. 已完成：加入透明 BM25 关键词检索，用 RRF 与 Dense 融合；默认 Hybrid 在当前小样本上改善 MRR/NDCG。
-6. 下一步：扩充包含歧义和困难负例的黄金集，再验证是否需要 Rerank，而不是因为“热门”就添加。
-7. 最后：增加回答忠实度、答案相关性、引用正确率和拒答评估。
+6. 已完成：扩充为 20 条困难 Query、24 个标签，以 12 个 Hybrid 候选对照 `BAAI/bge-reranker-base`；Rerank 的 Recall/NDCG 下降且 CPU 延迟显著增加，因此默认关闭。
+7. 后续 Eval 阶段：增加回答忠实度、答案相关性、引用正确率和拒答评估。
+
+下一阶段按完整 Agent 路线进入 Memory：先区分 Working Memory、可靠任务状态和长期用户偏好，再实现白名单写入、作用域、过期与删除，而不是把所有聊天内容直接向量化。
 
 ## 主要参考
 

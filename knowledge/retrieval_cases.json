@@ -118,5 +118,149 @@
         "relevance": 3
       }
     ]
+  },
+  {
+    "case_id": "euclidean_buffer_not_travel_time",
+    "query": "设施的圆形欧氏缓冲区能不能代表开车或步行的真实可达时间？",
+    "relevant_targets": [
+      {
+        "source": "knowledge/gis_analysis_guidelines.md",
+        "section": "服务半径缓冲区",
+        "text_contains": "欧氏缓冲只表达直线距离覆盖",
+        "relevance": 3
+      }
+    ]
+  },
+  {
+    "case_id": "population_uniformity_limitation",
+    "query": "为什么按覆盖面积比例估算覆盖人口可能不准确，需要什么更细数据？",
+    "relevant_targets": [
+      {
+        "source": "knowledge/gis_analysis_guidelines.md",
+        "section": "覆盖人口估算",
+        "text_contains": "人口在社区内部均匀分布",
+        "relevance": 3
+      }
+    ]
+  },
+  {
+    "case_id": "facility_count_vs_coverage_area",
+    "query": "社区的 facility_count 和缓冲区覆盖面积是不是同一个指标，应该怎样分别计算？",
+    "relevant_targets": [
+      {
+        "source": "knowledge/gis_analysis_guidelines.md",
+        "section": "空间连接与设施计数",
+        "text_contains": "覆盖面积与设施点计数是两种不同指标",
+        "relevance": 3
+      },
+      {
+        "source": "knowledge/gis_analysis_guidelines.md",
+        "section": "覆盖面积计算",
+        "text_contains": "合并缓冲区",
+        "relevance": 2
+      }
+    ]
+  },
+  {
+    "case_id": "analysis_crs_vs_web_crs",
+    "query": "为什么计算阶段用米制投影，但最终 Web 地图又导出成 EPSG:4326？",
+    "relevant_targets": [
+      {
+        "source": "knowledge/gis_analysis_guidelines.md",
+        "section": "输出与解释",
+        "text_contains": "Web 地图 GeoJSON 应导出为 EPSG:4326",
+        "relevance": 3
+      },
+      {
+        "source": "knowledge/gis_analysis_guidelines.md",
+        "section": "坐标参考系与距离计算",
+        "text_contains": "适用的投影坐标系",
+        "relevance": 2
+      }
+    ]
+  },
+  {
+    "case_id": "missing_accessibility_weight",
+    "query": "候选评分缺少道路可达性数据时，能不能把 accessibility_norm 随便填一个值？",
+    "relevant_targets": [
+      {
+        "source": "knowledge/facility_site_selection.md",
+        "section": "候选点生成、硬约束与排序流程",
+        "text_contains": "不应把 `accessibility_norm` 猜成某个值",
+        "relevance": 3
+      },
+      {
+        "source": "knowledge/facility_site_selection.md",
+        "section": "使用边界与分析目标",
+        "text_contains": "道路网络、出入口和交通方式",
+        "relevance": 2
+      }
+    ]
+  },
+  {
+    "case_id": "hard_constraint_not_evaluated",
+    "query": "缺少水域或规划约束图层时，候选点应该算通过还是标记未评估？",
+    "relevant_targets": [
+      {
+        "source": "knowledge/facility_site_selection.md",
+        "section": "候选点生成、硬约束与排序流程",
+        "text_contains": "标记为 `not_evaluated`",
+        "relevance": 3
+      }
+    ]
+  },
+  {
+    "case_id": "candidate_weight_sensitivity",
+    "query": "候选点排名对权重的小变化很敏感时，报告应该如何解释？",
+    "relevant_targets": [
+      {
+        "source": "knowledge/facility_site_selection.md",
+        "section": "结果验证与解释",
+        "text_contains": "结论不稳定",
+        "relevance": 3
+      }
+    ]
+  },
+  {
+    "case_id": "neighborhood_area_is_derived",
+    "query": "neighborhood_area_m2 是原始社区字段吗，应该在哪种坐标系中生成？",
+    "relevant_targets": [
+      {
+        "source": "knowledge/data_dictionary.md",
+        "section": "neighborhoods.geojson 社区面",
+        "text_contains": "不是原始字段",
+        "relevance": 3
+      }
+    ]
+  },
+  {
+    "case_id": "capacity_not_coverage_formula",
+    "query": "facilities.csv 的 capacity 是否直接参与 coverage_ratio 或覆盖人口公式？",
+    "relevant_targets": [
+      {
+        "source": "knowledge/data_dictionary.md",
+        "section": "facilities.csv 设施点",
+        "text_contains": "当前覆盖率公式不使用",
+        "relevance": 3
+      },
+      {
+        "source": "knowledge/gis_analysis_guidelines.md",
+        "section": "覆盖人口估算",
+        "text_contains": "population * coverage_ratio",
+        "relevance": 2
+      }
+    ]
+  },
+  {
+    "case_id": "outside_facility_buffer_vs_count",
+    "query": "设施点在社区外但缓冲区跨入社区时，会贡献覆盖面积并计入 facility_count 吗？",
+    "relevant_targets": [
+      {
+        "source": "knowledge/gis_analysis_guidelines.md",
+        "section": "空间连接与设施计数",
+        "text_contains": "不会计入该社区的 `facility_count`",
+        "relevance": 3
+      }
+    ]
   }
 ]

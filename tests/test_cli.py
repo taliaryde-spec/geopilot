@@ -73,6 +73,7 @@ def test_main_without_command_prints_help(
     assert "rag-evaluate" in captured.out
     assert "rag-chunk-experiment" in captured.out
     assert "rag-retrieval-experiment" in captured.out
+    assert "rag-rerank-experiment" in captured.out
 
 
 def test_chunk_experiment_parser_validates_repeatable_variants() -> None:
@@ -114,6 +115,28 @@ def test_retrieval_strategy_parser_accepts_hybrid_parameters() -> None:
     assert arguments.retrieval_mode.value == "hybrid"
     assert arguments.hybrid_candidate_k == 8
     assert arguments.rrf_k == 30
+
+
+def test_retrieval_strategy_parser_accepts_reranker_parameters() -> None:
+    arguments = build_parser().parse_args(
+        [
+            "rag-search",
+            "距离分析为什么不能直接使用 EPSG:4326？",
+            "--retrieval-mode",
+            "hybrid_rerank",
+            "--reranker-model",
+            "BAAI/bge-reranker-base",
+            "--reranker-cache",
+            "artifacts/test-reranker-cache",
+            "--rerank-candidate-k",
+            "10",
+        ]
+    )
+
+    assert arguments.retrieval_mode is cli_module.RetrievalMode.HYBRID_RERANK
+    assert arguments.reranker_model == "BAAI/bge-reranker-base"
+    assert arguments.reranker_cache == Path("artifacts/test-reranker-cache")
+    assert arguments.rerank_candidate_k == 10
 
 
 def test_rag_search_reports_missing_index(

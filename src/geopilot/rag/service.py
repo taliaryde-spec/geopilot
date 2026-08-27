@@ -27,11 +27,19 @@ from geopilot.rag.models import (
     KnowledgeSearchResult,
     RetrievalMode,
 )
+from geopilot.rag.reranking import (
+    DEFAULT_RERANK_CANDIDATE_K,
+    DEFAULT_RERANKER_MODEL,
+    FastEmbedReranker,
+    Reranker,
+    RerankSearcher,
+)
 from geopilot.rag.tokenization import summarize_token_usage
 from geopilot.rag.vector_store import LocalVectorStore
 
 DEFAULT_KNOWLEDGE_INDEX = Path("artifacts") / "rag" / "index.json"
 DEFAULT_MODEL_CACHE = Path("artifacts") / "models" / "fastembed"
+DEFAULT_RERANKER_CACHE = Path("artifacts") / "models" / "fastembed-rerank"
 DEFAULT_RETRIEVAL_MODE = RetrievalMode.HYBRID
 
 
@@ -45,6 +53,8 @@ class KnowledgeRetriever:
         retrieval_mode: RetrievalMode = DEFAULT_RETRIEVAL_MODE,
         hybrid_candidate_k: int = DEFAULT_HYBRID_CANDIDATE_K,
         rrf_k: int = DEFAULT_RRF_K,
+        reranker: Reranker | None = None,
+        rerank_candidate_k: int = DEFAULT_RERANK_CANDIDATE_K,
     ) -> None:
         self._store = store
         self._retrieval_mode = retrieval_mode
@@ -53,12 +63,25 @@ class KnowledgeRetriever:
             candidate_k=hybrid_candidate_k,
             rrf_k=rrf_k,
         )
+        self._rerank_searcher: RerankSearcher | None = None
+        if retrieval_mode is RetrievalMode.HYBRID_RERANK:
+            if reranker is None:
+                raise ValueError("Hybrid rerank mode requires a reranker.")
+            self._rerank_searcher = RerankSearcher(
+                self._hybrid_searcher,
+                reranker,
+                candidate_k=rerank_candidate_k,
+            )
 
     @property
     def retrieval_mode(self) -> RetrievalMode:
         return self._retrieval_mode
 
     def search(self, query: str, *, top_k: int = 4) -> KnowledgeSearchResult:
+        if self._retrieval_mode is RetrievalMode.HYBRID_RERANK:
+            if self._rerank_searcher is None:
+                raise RuntimeError("Rerank searcher was not initialized.")
+            return self._rerank_searcher.search(query, top_k=top_k)
         if self._retrieval_mode is RetrievalMode.HYBRID:
             return self._hybrid_searcher.search(query, top_k=top_k)
         return self._store.search(query, top_k=top_k)
@@ -116,34 +139,41 @@ def open_knowledge_retriever(
     retrieval_mode: RetrievalMode = DEFAULT_RETRIEVAL_MODE,
     hybrid_candidate_k: int = DEFAULT_HYBRID_CANDIDATE_K,
     rrf_k: int = DEFAULT_RRF_K,
+    reranker: Reranker | None = None,
+    reranker_model_name: str = DEFAULT_RERANKER_MODEL,
+    reranker_cache_directory: str | Path = DEFAULT_RERANKER_CACHE,
+    rerank_candidate_k: int = DEFAULT_RERANK_CANDIDATE_K,
 ) -> KnowledgeRetriever:
     """Open an existing index with its recorded embedding model."""
     selected_path = Path(index_path)
-    if embedding_provider is not None:
-        return KnowledgeRetriever(
-            LocalVectorStore(selected_path, embedding_provider),
-            retrieval_mode=retrieval_mode,
-            hybrid_candidate_k=hybrid_candidate_k,
-            rrf_k=rrf_k,
+    provider = embedding_provider
+    if provider is None:
+        manifest = (
+            LocalVectorStore(
+                selected_path,
+                FastEmbedProvider(
+                    DEFAULT_EMBEDDING_MODEL,
+                    cache_directory=cache_directory,
+                ),
+            )
+            .load()
+            .manifest
         )
-    manifest = (
-        LocalVectorStore(
-            selected_path,
-            FastEmbedProvider(
-                DEFAULT_EMBEDDING_MODEL,
-                cache_directory=cache_directory,
-            ),
+        provider = FastEmbedProvider(
+            manifest.model_name,
+            cache_directory=cache_directory,
         )
-        .load()
-        .manifest
-    )
-    provider = FastEmbedProvider(
-        manifest.model_name,
-        cache_directory=cache_directory,
-    )
+    selected_reranker = reranker
+    if retrieval_mode is RetrievalMode.HYBRID_RERANK and selected_reranker is None:
+        selected_reranker = FastEmbedReranker(
+            reranker_model_name,
+            cache_directory=reranker_cache_directory,
+        )
     return KnowledgeRetriever(
         LocalVectorStore(selected_path, provider),
         retrieval_mode=retrieval_mode,
         hybrid_candidate_k=hybrid_candidate_k,
         rrf_k=rrf_k,
+        reranker=selected_reranker,
+        rerank_candidate_k=rerank_candidate_k,
     )

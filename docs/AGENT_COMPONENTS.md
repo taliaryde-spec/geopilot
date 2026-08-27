@@ -21,7 +21,7 @@ LLM Adapter（DeepSeek / OpenRouter / OpenAI）
     ↕ Tool Calling
 数据检查 / CRS 推荐 / 本地知识检索 / 结构化计划提交
                     ↕
-        Chunking → Embedding → Vector Store
+        Chunking → Embedding → Dense/BM25/RRF → 可选 Cross-Encoder
     ↓
 PlanStore（awaiting_approval → approved / rejected）
     ↓ execute
@@ -58,6 +58,7 @@ GeoPackage / GeoJSON / Markdown
 | Vector Store | 已完成第一版 | `src/geopilot/rag/vector_store.py` | JSON 持久化、模型/维度校验和精确余弦相似度检索 |
 | RAG 服务与工具 | 已完成第一版 | `src/geopilot/rag/service.py`、`agent/tool_adapters.py` | 返回带来源引用的证据，并按索引存在性注册 Agent 工具 |
 | 检索评估 | 已完成第一版 | `src/geopilot/rag/evaluation.py`、`knowledge/retrieval_cases.json` | 按来源、章节、正文标签与相关度等级计算 Precision、Recall、MRR 和 NDCG |
+| Cross-Encoder Rerank | 已实现并完成首轮评估，默认关闭 | `src/geopilot/rag/reranking.py`、`rerank_experiment.py` | 对 Hybrid 候选成对打分；真实实验无收益，因此不替换默认 Hybrid |
 | 用户入口 | CLI 已完成 | `src/geopilot/cli.py` | 原有 Agent/执行命令及 rag-build、rag-search、rag-evaluate |
 
 ## 当前采用的方法与技术取舍
@@ -94,11 +95,13 @@ Token 护栏位于 `rag/embeddings.py`、`rag/tokenization.py` 和 `rag/service.
 
 在线默认检索由 `rag/lexical.py`、`rag/hybrid.py` 和 `rag/service.py` 组成。Dense 路径继续使用精确余弦相似度；BM25 对英文/数字/字段标识符做完整 token，对连续中文生成双字片段；两路默认各取最多 12 个候选，使用 RRF `k=60` 融合名次。归一化 RRF 分数仅用于排序，不是概率。结果同时暴露 Dense/BM25 原始分数和名次。`rag-retrieval-experiment` 固定索引、模型、Query 与 Top-K，并在预热同一 Embedding Provider 后比较两种策略。
 
+可选精排位于 `rag/reranking.py`：`HybridSearcher` 先召回最多 12 个候选，`BAAI/bge-reranker-base` 再将 Query 与每个候选的 `title + section + text` 成对编码并排序。`Reranker` Protocol 使真实模型与测试替身解耦；适配器拒绝空输入、数量不匹配和 NaN/Infinity 分数。只有显式选择 `hybrid_rerank` 才延迟加载约 1.052 GiB 的本地模型缓存。`rag-rerank-experiment` 在同一候选池和黄金集上对比 Hybrid 与 Rerank。真实结果没有改善，所以默认仍是 Hybrid。
+
 当前仅有 19 个 Chunk，选择 JSON + NumPy 是为了透明和便于测试；它不是面向百万向量、并发与增量索引的生产向量数据库。RAG 用于项目规则和字段知识，不代替数据检查或 GIS 数值计算。
 
 ### 8. 检索评估
 
-黄金样例为每个 Query 标注一个或多个相关目标：来源、章节、正文子串和 1～3 级相关度。评估器计算 Hit Rate@K、Precision@K、Recall@K、MRR 和 NDCG@K。Baseline 固定知识库、Embedding、Chunk 参数和 Top-K，为后续控制变量实验提供比较基准。
+黄金样例为每个 Query 标注一个或多个相关目标：来源、章节、正文子串和 1～3 级相关度。当前困难集包含 20 条 Query、24 个标签，其中 4 条为多正例。评估器计算 Hit Rate@K、Precision@K、Recall@K、MRR 和 NDCG@K。Baseline 固定知识库、Embedding、Chunk 参数和 Top-K，为后续控制变量实验提供比较基准。Hybrid Top-12 Recall 为 1.0，而 Rerank 后 Top-3 Recall 降低，说明问题发生在精排而不是候选召回。
 
 ## Memory 现在有什么
 
@@ -121,13 +124,15 @@ Chunking
 Embedding
     ↓
 Vector Store
-    ↓ 相似度排序
+    ↓ Dense + BM25 + RRF 候选召回
+可选 Cross-Encoder Rerank
+    ↓
 带来源与章节引用的上下文
     ↓
 Planner / Agent
 ```
 
-GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和项目知识，不用于替代 GeoPandas 的数值计算。当前使用 10 条人工黄金样例衡量 Precision@K、Recall@K、MRR 与 NDCG；回答忠实度和引用正确率的 LLM-as-judge/人工评测将在完整 Eval 阶段加入。
+GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和项目知识，不用于替代 GeoPandas 的数值计算。当前使用 20 条人工黄金 Query、24 个相关标签衡量 Precision@K、Recall@K、MRR 与 NDCG；回答忠实度和引用正确率的 LLM-as-judge/人工评测将在完整 Eval 阶段加入。
 
 ## MCP 在哪里
 
@@ -206,3 +211,17 @@ GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和�
 - 证据：`docs/evaluations/RAG_HYBRID_SEARCH_V1.md`。
 - 局限：当前 BM25 在查询时扫描 19 个 Chunk，没有持久化倒排索引；中文双字切分不等于专业分词；黄金集过小且大多只有一个正例。
 - 下一步：先扩充困难负例、多正例和词汇错配 Query，再以候选池 + Cross-Encoder 方式评估 Rerank。
+
+### 2026-08-27：困难集与 Cross-Encoder Rerank V1
+
+- 评测集：从 10 条扩充为 20 条 Query、24 个黄金标签；4 条问题包含两个正例，覆盖分析/展示 CRS、覆盖面积/设施计数、可达性权重和容量字段等易混淆边界。原 10 条集合固定为 `knowledge/retrieval_cases_hybrid_v1.json`。
+- 实现：新增 `Reranker` Protocol、延迟加载的 `FastEmbedReranker`、`RerankSearcher`、稳定错误代码、`hybrid_rerank` 模式及 `rag-rerank-experiment` CLI。
+- 模型：真实使用 `BAAI/bge-reranker-base`；缓存实占约 1.052 GiB。Rerank 输入为 Query 与候选的 `title + section + text`，第一阶段候选数 12。
+- 候选诊断：Hybrid Top-12 Hit Rate 和 Recall 都是 1.0，24 个标签全部已被召回。
+- 真实 Top-3：Hybrid 的 Precision/Recall/MRR/NDCG 为 0.3833/0.9750/0.9750/0.9521；Rerank 为 0.3500/0.9250/0.9750/0.9496。
+- 逐 Query：按 NDCG 比较为 1 条改善、2 条退化、17 条不变；`service_radius_field` 仍排第 2。
+- 时延：同一预热实验中 Hybrid 230.68ms，Rerank 67,688.53ms；单次本机 CPU 数据不作为 SLA，但足以说明当前量级差异。
+- 决策：保留可选 Rerank 能力用于后续模型/硬件实验，默认继续使用 Hybrid。组件实现完成不等于必须上线。
+- 测试：覆盖候选池边界、排序、模型按需加载、空输入、数量不匹配、非有限分数、CLI 和受控实验；全项目 152 项测试、Ruff、格式和 Pyright 均通过；证据见 `docs/evaluations/RAG_RERANK_V1.md`。
+- 局限：小语料、小黄金集、单模型、单次 CPU 测量；尚未评估生成侧忠实度、引用正确率和拒答。
+- 下一步：进入 Memory，先实现可审计的会话摘要与用户偏好写入边界。

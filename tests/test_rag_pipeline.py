@@ -18,6 +18,12 @@ from geopilot.rag.models import (
     RetrievalEvaluationCase,
     RetrievalMode,
 )
+from geopilot.rag.rerank_experiment import run_rerank_experiment
+from geopilot.rag.reranking import (
+    FastEmbedReranker,
+    RerankerError,
+    RerankerErrorCode,
+)
 from geopilot.rag.retrieval_experiment import run_retrieval_experiment
 from geopilot.rag.service import (
     KnowledgeRetriever,
@@ -74,6 +80,24 @@ class MisleadingEmbeddingProvider(KeywordEmbeddingProvider):
 
     def embed_query(self, query: str) -> list[float]:
         return [1.0, 0.0]
+
+
+class KeywordReranker:
+    """Deterministic Cross-Encoder substitute used without a model download."""
+
+    def __init__(self, preferred_text: str) -> None:
+        self.preferred_text = preferred_text
+        self.scored_document_counts: list[int] = []
+
+    @property
+    def model_name(self) -> str:
+        return "test-reranker-v1"
+
+    def score(self, query: str, documents: list[str]) -> list[float]:
+        self.scored_document_counts.append(len(documents))
+        return [
+            2.0 if self.preferred_text in document else -1.0 for document in documents
+        ]
 
 
 def _write_knowledge_files(directory: Path) -> tuple[Path, Path]:
@@ -220,6 +244,97 @@ def test_hybrid_search_recovers_exact_identifier_missed_by_dense(
     assert hybrid.hits[0].dense_rank == 2
     assert hybrid.hits[0].bm25_rank == 1
     assert hybrid.hits[0].bm25_score is not None
+
+
+def test_rerank_search_reorders_bounded_hybrid_candidates(tmp_path: Path) -> None:
+    (tmp_path / "generic.md").write_text(
+        "# 通用说明\n\n## 设施分析\n\n设施分析的一般背景信息。",
+        encoding="utf-8",
+    )
+    (tmp_path / "fields.md").write_text(
+        "# 数据字典\n\n## 服务半径\n\nservice_radius_m 表示设施服务半径。",
+        encoding="utf-8",
+    )
+    index_path = tmp_path / "index.json"
+    provider = MisleadingEmbeddingProvider()
+    build_knowledge_index(
+        [tmp_path],
+        index_path=index_path,
+        embedding_provider=provider,
+        working_directory=tmp_path,
+    )
+    reranker = KeywordReranker("一般背景信息")
+
+    result = open_knowledge_retriever(
+        index_path=index_path,
+        embedding_provider=provider,
+        retrieval_mode=RetrievalMode.HYBRID_RERANK,
+        hybrid_candidate_k=2,
+        reranker=reranker,
+        rerank_candidate_k=2,
+    ).search("service_radius_m 字段是什么？", top_k=1)
+
+    assert result.retrieval_mode is RetrievalMode.HYBRID_RERANK
+    assert result.reranker_model_name == "test-reranker-v1"
+    assert result.hits[0].source == "generic.md"
+    assert result.hits[0].score == 2.0
+    assert result.hits[0].rerank_score == 2.0
+    assert result.hits[0].rerank_rank == 1
+    assert result.hits[0].dense_rank is not None
+    assert reranker.scored_document_counts == [2]
+
+
+def test_hybrid_rerank_mode_requires_a_reranker(tmp_path: Path) -> None:
+    _write_knowledge_files(tmp_path)
+    index_path = tmp_path / "index.json"
+    provider = KeywordEmbeddingProvider()
+    build_knowledge_index(
+        [tmp_path],
+        index_path=index_path,
+        embedding_provider=provider,
+        working_directory=tmp_path,
+    )
+
+    with pytest.raises(ValueError, match="requires a reranker"):
+        KnowledgeRetriever(
+            LocalVectorStore(index_path, provider),
+            retrieval_mode=RetrievalMode.HYBRID_RERANK,
+        )
+
+
+def test_fastembed_reranker_validates_input_and_output_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class WrongCountModel:
+        def rerank(self, query: str, documents: list[str]) -> list[float]:
+            return [1.0]
+
+    reranker = FastEmbedReranker("test-reranker")
+
+    with pytest.raises(RerankerError) as empty_input:
+        reranker.score("", ["candidate"])
+    assert empty_input.value.code is RerankerErrorCode.EMPTY_INPUT
+
+    monkeypatch.setattr(reranker, "_get_model", lambda: WrongCountModel())
+    with pytest.raises(RerankerError) as wrong_count:
+        reranker.score("query", ["first", "second"])
+    assert wrong_count.value.code is RerankerErrorCode.RESULT_COUNT_MISMATCH
+
+
+def test_fastembed_reranker_rejects_non_finite_scores(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class InvalidScoreModel:
+        def rerank(self, query: str, documents: list[str]) -> list[float]:
+            return [float("nan")]
+
+    reranker = FastEmbedReranker("test-reranker")
+    monkeypatch.setattr(reranker, "_get_model", lambda: InvalidScoreModel())
+
+    with pytest.raises(RerankerError) as captured:
+        reranker.score("query", ["candidate"])
+
+    assert captured.value.code is RerankerErrorCode.INVALID_SCORE
 
 
 def test_bm25_scores_exact_identifier_above_unmatched_chunk(tmp_path: Path) -> None:
@@ -611,3 +726,54 @@ def test_retrieval_experiment_compares_dense_and_hybrid(tmp_path: Path) -> None:
     assert result.improved_case_count == 1
     assert result.regressed_case_count == 0
     assert result.unchanged_case_count == 0
+
+
+def test_rerank_experiment_compares_shared_hybrid_candidates(tmp_path: Path) -> None:
+    _write_knowledge_files(tmp_path)
+    index_path = tmp_path / "index.json"
+    provider = KeywordEmbeddingProvider()
+    build_knowledge_index(
+        [tmp_path],
+        index_path=index_path,
+        embedding_provider=provider,
+        working_directory=tmp_path,
+    )
+    store = LocalVectorStore(index_path, provider)
+    hybrid = KnowledgeRetriever(
+        store,
+        retrieval_mode=RetrievalMode.HYBRID,
+        hybrid_candidate_k=2,
+    ).search("无关键词查询", top_k=2)
+    target = hybrid.hits[1]
+    cases = [
+        RetrievalEvaluationCase(
+            case_id="rerank_second_candidate",
+            query="无关键词查询",
+            relevant_targets=[
+                RelevantKnowledgeTarget(
+                    source=target.source,
+                    section=target.section,
+                )
+            ],
+        )
+    ]
+
+    result = run_rerank_experiment(
+        index_path,
+        cases,
+        embedding_provider=provider,
+        reranker=KeywordReranker(target.title),
+        top_k=1,
+        hybrid_candidate_k=2,
+        rerank_candidate_k=2,
+    )
+
+    assert [run.retrieval_mode for run in result.runs] == [
+        RetrievalMode.HYBRID,
+        RetrievalMode.HYBRID_RERANK,
+    ]
+    assert result.runs[0].evaluation.mean_recall_at_k == 0.0
+    assert result.runs[1].evaluation.mean_recall_at_k == 1.0
+    assert result.recall_delta == 1.0
+    assert result.ndcg_delta == 1.0
+    assert result.improved_case_count == 1

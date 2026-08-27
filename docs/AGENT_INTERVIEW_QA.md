@@ -104,7 +104,7 @@ DeepSeek 的参数知识不知道 GeoPilot 示例字段的业务含义，也不�
 
 离线侧：Markdown/TXT 加载 → UTF-8 与空文档校验 → 标题结构解析 → 超长章节递归字符切分 → passage Embedding → 向量归一化 → 保存向量、正文、章节、来源和模型 manifest。
 
-在线侧：Agent 判断需要知识 → `search_knowledge` → query Embedding → 模型名和维度校验 → 精确余弦检索 → Top-K 正文与引用 → Tool Result 进入上下文 → DeepSeek 基于证据回答。
+在线侧：Agent 判断需要知识 → `search_knowledge` → query Embedding → 模型名和维度校验 → Dense 与 BM25 双路召回 → RRF 融合 → 可选 Cross-Encoder 精排 → Top-K 正文与引用 → Tool Result 进入上下文 → DeepSeek 基于证据回答。默认不启用 Cross-Encoder，因为真实对照没有质量收益。
 
 ### 23. 为什么选择 `BAAI/bge-small-zh-v1.5`？
 
@@ -112,7 +112,7 @@ DeepSeek 的参数知识不知道 GeoPilot 示例字段的业务含义，也不�
 
 ### 24. Embedding、生成模型和 Rerank 有什么区别？
 
-Embedding 使用可离线预计算的独立向量做粗召回；DeepSeek 是生成模型，负责工具决策和答案组织；Rerank 通常把 Query 与少量候选成对输入交叉编码器做精排，可能提高准确性，但增加逐对推理延迟。当前只有 19 个 Chunk，先通过评估决定是否添加 Rerank。
+Embedding 把 Query 和文档分别编码，文档向量可离线预计算，适合粗召回；DeepSeek 是生成模型，负责工具决策和答案组织；Rerank 把 Query 与每个候选共同输入 Cross-Encoder，交互更充分但不能预计算文档分数。GeoPilot 已实现 `BAAI/bge-reranker-base` 的可选精排，真实实验质量略降且 CPU 延迟大幅增加，所以没有设为默认。
 
 ### 25. Chunk 怎么切，为什么？
 
@@ -140,11 +140,11 @@ Embedding 使用可离线预计算的独立向量做粗召回；DeepSeek 是生�
 
 黄金样例可标注多个相关目标，包括来源、章节、正文子串和 1～3 级相关度。Precision@K 衡量纯度，Recall@K 衡量覆盖，MRR 关注第一个正确结果的位置，NDCG 同时考虑相关度等级和排序位置。
 
-当前 10 条 Top-3 结果：Hit Rate 1.0、Precision 0.3333、Recall 1.0、MRR 0.90、NDCG 0.9262。CRS 和缺失可行性图层问题的黄金片段排第 2。
+当前困难集包含 20 条 Query、24 个相关标签，其中 4 条为多正例。默认 Hybrid 的 Top-3 结果为 Hit Rate 1.0、Precision 0.3833、Recall 0.9750、MRR 0.9750、NDCG 0.9521。`service_radius_field` 的首个相关片段排第 2，`missing_accessibility_weight` 只召回两个正例中的一个。
 
 ### 31. 为什么 Precision@3 只有 0.3333，还能说效果好吗？
 
-当前每个问题只人工标注了一个严格黄金片段，Top-3 分母固定为 3，因此一个黄金命中对应 1/3。另两个片段可能有辅助价值，但未标为黄金就不算相关。这个结果说明召回完整，但上下文纯度和标注覆盖仍需改进；不能只展示 Recall 和 MRR 隐藏 Precision。
+大多数问题只有一个严格黄金片段，Top-3 命中一个时 Precision 就是 1/3；4 条多正例问题最多可达到 2/3。未标注的辅助片段按评测规则仍算不相关，因此当前 0.3833 不能直接解释为用户看到的上下文有 61.67% 都“错误”。它主要用于同一标签口径下做版本对照，必须与 Recall、NDCG、逐 Query 回归和标注覆盖一起看。
 
 ### 32. 如何证明优化有效？
 
@@ -178,7 +178,7 @@ Function Calling 是模型输出结构化工具请求的机制；MCP 是客户�
 
 ### 39. 当前系统最大的不足是什么？
 
-RAG 语料和黄金集小，只支持 Markdown/TXT，Chunk 按字符而不是 token，仅稠密检索，没有混合检索、Rerank、相似度拒答和生成侧评估；Agent 没有长期记忆、完整 tracing、成本监控、Web UI、权限系统与部署。当前定位是可运行、可解释、可评估的工程学习项目，不是生产平台。
+RAG 语料和黄金集仍小，只支持 Markdown/TXT；虽然已有 Hybrid 和可选 Rerank，但没有相似度拒答、Query 改写和生成侧评估。Agent 还没有跨会话长期记忆、完整 tracing、成本监控、Web UI、权限系统与部署。当前定位是可运行、可解释、可评估的工程学习项目，不是生产平台。
 
 ### 40. 如何证明 RAG 不是孤立的演示脚本，而是真正接入了 Agent？
 
@@ -194,7 +194,7 @@ RAG 语料和黄金集小，只支持 Markdown/TXT，Chunk 按字符而不是 to
 
 ### 43. 为什么 GeoPilot 要做 Hybrid Search？
 
-Dense Embedding 擅长语义近似，但字段名、EPSG 编号和专业术语需要精确匹配；BM25 正好补足这类词法信号。GeoPilot 同时召回 Dense 与 BM25 候选后用 RRF 融合。在固定 10 条 Query 上 Recall 都是 1.0，但 Hybrid 把 MRR 从 0.90 提升到 0.95、NDCG 从 0.9262 提升到 0.9631，所以有量化依据切换默认。
+Dense Embedding 擅长语义近似，但字段名、EPSG 编号和专业术语需要精确匹配；BM25 正好补足这类词法信号。GeoPilot 同时召回 Dense 与 BM25 候选后用 RRF 融合。历史固定 10 条 Query 上 Hybrid 把 MRR 从 0.90 提升到 0.95、NDCG 从 0.9262 提升到 0.9631且 Recall 不降，因此有量化依据切换默认；这个历史集合已单独快照，避免后续扩充黄金集导致数字无法复现。
 
 ### 44. 为什么不能直接把余弦分数和 BM25 分数加权相加？
 
@@ -206,15 +206,31 @@ Dense Embedding 擅长语义近似，但字段名、EPSG 编号和专业术语�
 
 ### 46. Hybrid 是否每条 Query 都更好？
 
-不是。真实对照中 2 条排名改善、7 条不变，但 `service_radius_field` 从第 1 降到第 2。聚合 MRR/NDCG 改善且 Recall 没下降，所以当前默认采用 Hybrid；报告仍保留单条退化，后续困难集和 Rerank 需要重点检查这类精确字段问题。不能只汇报平均数隐藏回归。
+不是。历史 10 条对照中 2 条改善、7 条不变，但 `service_radius_field` 从第 1 降到第 2。扩充到 20 条困难集后，Hybrid Top-3 的 Recall 为 0.975、NDCG 为 0.9521，仍保留字段问题和一个多正例漏召回。默认采用 Hybrid 是基于聚合收益、时延和逐 Query 回归共同决定，不代表每条查询都优于 Dense。
 
 ### 47. 当前 BM25 为什么没有单独持久化索引？
 
 当前只有 19 个 Chunk，`KnowledgeRetriever` 首次 Hybrid 查询时从已有 JSON 向量索引构建内存 BM25，工程上更透明且足够快。复杂度仍是小语料可接受的扫描/内存统计，不支持并发、多副本、增量更新和百万文档。规模扩大时会把词法索引迁移到 Elasticsearch/OpenSearch 或支持稀疏检索的向量数据库。
 
+### 48. GeoPilot 的 Rerank 是怎么实现的？
+
+`HybridSearcher` 先用 Dense + BM25 + RRF 召回 12 个候选；`RerankSearcher` 将 Query 与每个候选的 `title + section + text` 交给 `BAAI/bge-reranker-base` 成对打分，再返回 Top-3。`Reranker` Protocol 隔离模型，真实实现延迟加载 FastEmbed Cross-Encoder，测试使用确定性替身。结果保留 Dense、BM25、Rerank 的原始分数和排名，错误边界覆盖空输入、结果数量不匹配与非有限分数。
+
+### 49. 为什么 Rerank 没有提升，是否说明实现失败？
+
+不说明实现失败。Hybrid Top-12 的 Recall 是 1.0，证明 24 个黄金标签已全部进入候选池；Cross-Encoder 重排后 Top-3 Recall 从 0.975 降到 0.925、NDCG 从 0.9521 降到 0.9496，其中两个多正例问题各掉出一个证据。这说明当前模型与项目标签/语料的排序偏好不完全一致。组件契约、真实推理和对照实验都工作正常，只是实验结论是不采用它作为默认策略。
+
+### 50. 如何判断问题出在召回还是 Rerank？
+
+先测候选池 Recall，再测最终 Top-K。GeoPilot 的 Hybrid Top-12 Recall 为 1.0，而 Rerank Top-3 Recall 为 0.925，所以不是候选缺失，而是相关候选被 Cross-Encoder 排到 Top-3 之外。如果候选池 Recall 已经低，应该先优化 Query、Embedding、BM25 或候选数；只有候选已经召回，优化精排才有意义。
+
+### 51. 为什么已经写了 Rerank 却不默认上线？
+
+工程能力与产品决策要分开。真实预热实验中 Hybrid 约 230.68ms，Rerank 约 67.69s，同时质量没有提升；模型缓存约 1.052GiB。GeoPilot 因此保留 `hybrid_rerank` 模式供后续模型、硬件和批处理实验，但默认继续使用 Hybrid，并通过延迟加载避免普通 Agent 启动承担大模型成本。
+
 ## 九、简历描述草案
 
-实现自然语言驱动的 GeoPilot GIS Agent：设计 Provider-neutral LLM 适配、Pydantic Function Calling、结构化规划与人工审批，使用确定性 GeoPandas Workflow 完成 13 步覆盖分析并支持失败检查点恢复；构建本地引用型 RAG，采用结构感知切块、BGE 中文 Embedding、同 tokenizer 截断护栏及 BM25 + Dense + RRF 混合检索，在 10 条演示样例上取得 Recall@3 1.0、MRR 0.95、NDCG@3 0.9631，并保留小样本与单 Query 退化边界。
+实现自然语言驱动的 GeoPilot GIS Agent：设计 Provider-neutral LLM 适配、Pydantic Function Calling、结构化规划与人工审批，使用确定性 GeoPandas Workflow 完成 13 步覆盖分析并支持失败检查点恢复；构建本地引用型 RAG，采用结构感知切块、BGE 中文 Embedding、同 tokenizer 截断护栏及 BM25 + Dense + RRF 混合检索；构造 20 条 GIS 困难 Query、24 个相关标签并完成 Cross-Encoder 对照，默认 Hybrid 的 Recall@3/MRR/NDCG@3 为 0.975/0.975/0.9521，依据质量与约 293 倍单次 CPU 时延差拒绝默认启用 Rerank。
 
 ## 迭代记录
 
@@ -249,3 +265,9 @@ Dense Embedding 擅长语义近似，但字段名、EPSG 编号和专业术语�
 - 真实 DeepSeek Agent 已通过默认 Hybrid 路径回答 CRS 问题并保持工具边界。
 - 全项目 146 项自动化测试通过。
 - 下一轮面试准备聚焦困难负例设计、候选池大小和是否需要 Cross-Encoder Rerank。
+
+### 2026-08-27：困难集与 Cross-Encoder Rerank V1
+
+- 更新为 20 条 Query、24 个标签、4 条多正例的真实评测口径。
+- 新增 Cross-Encoder 实现、候选召回/最终排序诊断、Rerank 退化原因和默认上线决策问答。
+- 简历草案保留真实 Hybrid 指标，并把“实验否决昂贵组件”作为评测驱动工程证据，不包装成 Rerank 提升。

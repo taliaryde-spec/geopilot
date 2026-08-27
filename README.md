@@ -23,8 +23,8 @@ GeoPilot 是一个自然语言驱动的地理空间分析 Agent。用户提供�
 - 基于数据范围确定性推荐米制投影 CRS，并禁止 Agent 猜测 EPSG 编号
 - 结构化分析计划、文件检查点与明确的批准/拒绝状态转换
 - 已批准计划的依赖编译、确定性执行、失败停止与检查点恢复
-- Markdown/TXT 知识加载、层级切块、本地中文 Embedding、向量检索与来源引用
-- RAG 的章节级 Hit Rate@K、MRR 离线评估及 Agent `search_knowledge` 工具
+- Markdown/TXT 知识加载、层级切块、本地中文 Embedding、Hybrid Search、可选 Cross-Encoder 与来源引用
+- RAG 的章节级 Precision/Recall/MRR/NDCG 离线评估及 Agent `search_knowledge` 工具
 - Ruff、Pyright 和 Pytest 质量检查
 
 完整组件规划与各阶段验收标准见 [GeoPilot 项目路线图](docs/PROJECT_ROADMAP.md)。
@@ -237,12 +237,12 @@ uv run geopilot rag-search "为什么不能在 EPSG:4326 中直接做米制缓�
 uv run geopilot rag-evaluate knowledge/retrieval_cases.json --top-k 3
 ```
 
-默认检索现为 Dense + BM25 + RRF 的 Hybrid Search。当前 10 条 GIS 黄金样例的真实 Top-3 结果为：`Hit Rate = 1.00`、`Precision = 0.3333`、`Recall = 1.00`、`MRR = 0.95`、`NDCG = 0.9631`。相对 Dense-only，MRR 提升 0.05、NDCG 提升 0.0369；2 条 Query 排名改善、1 条退化、7 条不变。标签同时指定来源、章节、正文子串和相关度等级，不只检查是否命中了同一份文档。完整对照见 [Hybrid Search V1](docs/evaluations/RAG_HYBRID_SEARCH_V1.md)。
+默认检索现为 Dense + BM25 + RRF 的 Hybrid Search。当前困难集包含 20 条 GIS Query、24 个黄金标签，其中 4 条为多正例；Hybrid 的真实 Top-3 结果为：`Hit Rate = 1.00`、`Precision = 0.3833`、`Recall = 0.9750`、`MRR = 0.9750`、`NDCG = 0.9521`。标签同时指定来源、章节、正文子串和相关度等级，不只检查是否命中了同一份文档。历史 10 条 Dense/Hybrid 对照见 [Hybrid Search V1](docs/evaluations/RAG_HYBRID_SEARCH_V1.md)，并由独立快照保证可复现。
 
 复现 Chunking 控制变量实验：
 
 ```powershell
-uv run geopilot rag-chunk-experiment knowledge --cases knowledge/retrieval_cases.json --top-k 3
+uv run geopilot rag-chunk-experiment knowledge --cases knowledge/retrieval_cases_hybrid_v1.json --top-k 3
 ```
 
 实验输出同时包含模型 token 上限、平均/P95/最大 token、最大利用率、80% 告警 Chunk 数和超限 Chunk 数。可用 `--token-warning-ratio 0.75` 调整告警线；该参数只影响风险标记，不改变模型真实的 512-token 上限。
@@ -250,10 +250,24 @@ uv run geopilot rag-chunk-experiment knowledge --cases knowledge/retrieval_cases
 复现 Dense-only 与 Hybrid Search 对照：
 
 ```powershell
-uv run geopilot rag-retrieval-experiment knowledge/retrieval_cases.json --top-k 3 --hybrid-candidate-k 12 --rrf-k 60
+uv run geopilot rag-retrieval-experiment knowledge/retrieval_cases_hybrid_v1.json --top-k 3 --hybrid-candidate-k 12 --rrf-k 60
 ```
 
 普通 `rag-search` 和 Agent 默认使用 Hybrid；可传入 `--retrieval-mode dense` 复现纯向量结果。Hybrid 输出中的 `score` 是归一化 RRF 分数，不是概率；`dense_score`、`bm25_score`、`dense_rank` 和 `bm25_rank` 用于解释两路召回。
+
+显式测试 Hybrid + Cross-Encoder 精排：
+
+```powershell
+uv run geopilot rag-search "为什么分析 CRS 与 Web 地图 CRS 不一样？" --top-k 3 --retrieval-mode hybrid_rerank
+```
+
+首次使用会把 `BAAI/bge-reranker-base` 下载到被 Git 忽略的 `artifacts/models/fastembed-rerank/`。真实 20-Query 对照中，Rerank 的 Recall@3/NDCG@3 为 0.9250/0.9496，低于 Hybrid 的 0.9750/0.9521；同一预热 CPU 实验总时长约从 230.68ms 增至 67.69s。因此项目保留可选能力，但默认不启用。完整参数、候选池诊断和逐 Query 变化见 [Cross-Encoder Rerank V1](docs/evaluations/RAG_RERANK_V1.md)。
+
+复现 Hybrid 与 Rerank 对照：
+
+```powershell
+uv run geopilot rag-rerank-experiment knowledge/retrieval_cases.json --top-k 3 --hybrid-candidate-k 12 --rerank-candidate-k 12 --rrf-k 60
+```
 
 后续大模型学习和面试准备以 [GeoPilot 大模型学习与面试主线](docs/LLM_LEARNING_PATH.md) 为统一入口；每个阶段必须同时交付原理、代码、测试、真实实验、技术取舍、面试回答和诚实的简历描述。
 

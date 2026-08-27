@@ -20,7 +20,7 @@ GeoPilot 最初使用 `chunk_size=700`、`overlap=100`，但这只是工程 base
 ## 复现命令
 
 ```powershell
-uv run geopilot rag-chunk-experiment knowledge --cases knowledge/retrieval_cases.json --top-k 3
+uv run geopilot rag-chunk-experiment knowledge --cases knowledge/retrieval_cases_hybrid_v1.json --top-k 3
 ```
 
 ## 实验结果

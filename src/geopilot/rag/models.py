@@ -101,18 +101,21 @@ class KnowledgeSearchHit(BaseModel):
     section: str
     citation: str
     text: str
-    score: float = Field(ge=-1.0, le=1.0)
+    score: float
     dense_score: float | None = Field(default=None, ge=-1.0, le=1.0)
     bm25_score: float | None = Field(default=None, ge=0)
+    rerank_score: float | None = None
     dense_rank: int | None = Field(default=None, ge=1)
     bm25_rank: int | None = Field(default=None, ge=1)
+    rerank_rank: int | None = Field(default=None, ge=1)
 
 
 class RetrievalMode(StrEnum):
-    """Supported first-stage knowledge retrieval strategies."""
+    """Supported knowledge retrieval and ranking strategies."""
 
     DENSE = "dense"
     HYBRID = "hybrid"
+    HYBRID_RERANK = "hybrid_rerank"
 
 
 class KnowledgeSearchResult(BaseModel):
@@ -121,6 +124,7 @@ class KnowledgeSearchResult(BaseModel):
     query: str = Field(min_length=1)
     model_name: str
     retrieval_mode: RetrievalMode = RetrievalMode.DENSE
+    reranker_model_name: str | None = None
     hits: list[KnowledgeSearchHit]
 
 
@@ -195,6 +199,28 @@ class RetrievalExperimentResult(BaseModel):
     top_k: int = Field(ge=1)
     case_count: int = Field(ge=1)
     hybrid_candidate_k: int = Field(ge=1, le=20)
+    rrf_k: int = Field(ge=1)
+    hit_rate_delta: float = Field(ge=-1, le=1)
+    precision_delta: float = Field(ge=-1, le=1)
+    recall_delta: float = Field(ge=-1, le=1)
+    mrr_delta: float = Field(ge=-1, le=1)
+    ndcg_delta: float = Field(ge=-1, le=1)
+    improved_case_count: int = Field(ge=0)
+    regressed_case_count: int = Field(ge=0)
+    unchanged_case_count: int = Field(ge=0)
+    runs: list[RetrievalExperimentRun] = Field(min_length=2)
+
+
+class RerankExperimentResult(BaseModel):
+    """Hybrid and reranked runs evaluated under shared retrieval settings."""
+
+    index_path: str
+    embedding_model_name: str = Field(min_length=1)
+    reranker_model_name: str = Field(min_length=1)
+    top_k: int = Field(ge=1)
+    case_count: int = Field(ge=1)
+    hybrid_candidate_k: int = Field(ge=1, le=20)
+    rerank_candidate_k: int = Field(ge=1, le=20)
     rrf_k: int = Field(ge=1)
     hit_rate_delta: float = Field(ge=-1, le=1)
     precision_delta: float = Field(ge=-1, le=1)

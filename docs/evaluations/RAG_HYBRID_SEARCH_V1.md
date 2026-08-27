@@ -19,7 +19,7 @@
 复现命令：
 
 ```powershell
-uv run geopilot rag-retrieval-experiment knowledge/retrieval_cases.json --top-k 3 --hybrid-candidate-k 12 --rrf-k 60
+uv run geopilot rag-retrieval-experiment knowledge/retrieval_cases_hybrid_v1.json --top-k 3 --hybrid-candidate-k 12 --rrf-k 60
 ```
 
 ## 聚合结果
@@ -53,3 +53,5 @@ uv run geopilot rag-retrieval-experiment knowledge/retrieval_cases.json --top-k 
 - 下一步扩充困难负例、多正例和语义/词法冲突 Query，再判断 Cross-Encoder Rerank 是否改善精排并修复 `service_radius_field` 回归。
 
 本阶段完成后，全项目 Ruff、格式、Pyright 和 146 项 pytest 均通过；真实 DeepSeek Agent 默认 Hybrid 调用也验证成功。
+
+> 历史复现说明：本报告使用的原始 10 条黄金集已固定为 `knowledge/retrieval_cases_hybrid_v1.json`。持续扩充的 `knowledge/retrieval_cases.json` 不用于复现本报告数字。

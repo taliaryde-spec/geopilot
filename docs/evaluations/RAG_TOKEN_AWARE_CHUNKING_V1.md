@@ -7,7 +7,7 @@
 ## 计数口径
 
 - 语料：`knowledge/` 下 3 份 Markdown 文档。
-- 黄金集：`knowledge/retrieval_cases.json`，10 条 Query。
+- 黄金集：`knowledge/retrieval_cases_hybrid_v1.json`，10 条 Query。
 - Embedding/tokenizer：`BAAI/bge-small-zh-v1.5`。
 - 检索：精确余弦 Top-3。
 - 输入文本：`title + section + text`，不是只统计正文。
@@ -18,7 +18,7 @@
 复现命令：
 
 ```powershell
-uv run geopilot rag-chunk-experiment knowledge --cases knowledge/retrieval_cases.json --top-k 3 --output-directory artifacts/rag/token_chunk_experiments_v1 --token-warning-ratio 0.8
+uv run geopilot rag-chunk-experiment knowledge --cases knowledge/retrieval_cases_hybrid_v1.json --top-k 3 --output-directory artifacts/rag/token_chunk_experiments_v1 --token-warning-ratio 0.8
 ```
 
 ## 真实结果

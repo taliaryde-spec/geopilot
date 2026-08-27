@@ -35,6 +35,9 @@ from geopilot.rag import (
     DEFAULT_HYBRID_CANDIDATE_K,
     DEFAULT_KNOWLEDGE_INDEX,
     DEFAULT_MODEL_CACHE,
+    DEFAULT_RERANK_CANDIDATE_K,
+    DEFAULT_RERANKER_CACHE,
+    DEFAULT_RERANKER_MODEL,
     DEFAULT_RETRIEVAL_MODE,
     DEFAULT_RRF_K,
     DEFAULT_TOKEN_WARNING_RATIO,
@@ -48,6 +51,7 @@ from geopilot.rag import (
     load_evaluation_cases,
     open_knowledge_retriever,
     run_chunking_experiment,
+    run_rerank_experiment,
     run_retrieval_experiment,
 )
 from geopilot.tools.csv_point_loader import CsvPointLoadError
@@ -259,6 +263,29 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_RRF_K,
     )
 
+    rerank_experiment_parser = subparsers.add_parser(
+        "rag-rerank-experiment",
+        help="Compare Hybrid Search and Cross-Encoder reranking.",
+    )
+    rerank_experiment_parser.add_argument(
+        "cases",
+        type=Path,
+        help="JSON retrieval evaluation cases shared by both modes.",
+    )
+    _add_rag_index_arguments(rerank_experiment_parser, include_model=False)
+    rerank_experiment_parser.add_argument("--top-k", type=int, default=3)
+    rerank_experiment_parser.add_argument(
+        "--hybrid-candidate-k",
+        type=int,
+        default=DEFAULT_HYBRID_CANDIDATE_K,
+    )
+    rerank_experiment_parser.add_argument(
+        "--rrf-k",
+        type=int,
+        default=DEFAULT_RRF_K,
+    )
+    _add_reranker_arguments(rerank_experiment_parser)
+
     chunk_experiment_parser = subparsers.add_parser(
         "rag-chunk-experiment",
         help="Compare chunk size and overlap variants under fixed RAG settings.",
@@ -324,7 +351,7 @@ def _parse_chunking_variant(value: str) -> ChunkingExperimentVariant:
 
 
 def _add_retrieval_strategy_arguments(parser: argparse.ArgumentParser) -> None:
-    """Add Dense/Hybrid selection and shared Hybrid tuning parameters."""
+    """Add retrieval selection plus Hybrid and Rerank tuning parameters."""
     parser.add_argument(
         "--retrieval-mode",
         type=RetrievalMode,
@@ -337,6 +364,25 @@ def _add_retrieval_strategy_arguments(parser: argparse.ArgumentParser) -> None:
         default=DEFAULT_HYBRID_CANDIDATE_K,
     )
     parser.add_argument("--rrf-k", type=int, default=DEFAULT_RRF_K)
+    _add_reranker_arguments(parser)
+
+
+def _add_reranker_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add opt-in Cross-Encoder model, cache, and candidate-pool settings."""
+    parser.add_argument(
+        "--reranker-model",
+        default=DEFAULT_RERANKER_MODEL,
+    )
+    parser.add_argument(
+        "--reranker-cache",
+        type=Path,
+        default=DEFAULT_RERANKER_CACHE,
+    )
+    parser.add_argument(
+        "--rerank-candidate-k",
+        type=int,
+        default=DEFAULT_RERANK_CANDIDATE_K,
+    )
 
 
 def _add_plans_directory_argument(parser: argparse.ArgumentParser) -> None:
@@ -649,6 +695,9 @@ def _run_rag_search(
     retrieval_mode: RetrievalMode,
     hybrid_candidate_k: int,
     rrf_k: int,
+    reranker_model: str,
+    reranker_cache: Path,
+    rerank_candidate_k: int,
 ) -> int:
     """Query a local vector index and print ranked citation evidence."""
     try:
@@ -658,6 +707,9 @@ def _run_rag_search(
             retrieval_mode=retrieval_mode,
             hybrid_candidate_k=hybrid_candidate_k,
             rrf_k=rrf_k,
+            reranker_model_name=reranker_model,
+            reranker_cache_directory=reranker_cache,
+            rerank_candidate_k=rerank_candidate_k,
         ).search(query, top_k=top_k)
     except (
         EmbeddingError,
@@ -681,6 +733,9 @@ def _run_rag_evaluate(
     retrieval_mode: RetrievalMode,
     hybrid_candidate_k: int,
     rrf_k: int,
+    reranker_model: str,
+    reranker_cache: Path,
+    rerank_candidate_k: int,
 ) -> int:
     """Run an offline retrieval evaluation against the local index."""
     try:
@@ -690,6 +745,9 @@ def _run_rag_evaluate(
             retrieval_mode=retrieval_mode,
             hybrid_candidate_k=hybrid_candidate_k,
             rrf_k=rrf_k,
+            reranker_model_name=reranker_model,
+            reranker_cache_directory=reranker_cache,
+            rerank_candidate_k=rerank_candidate_k,
         )
         result = evaluate_retrieval(
             retriever,
@@ -726,6 +784,44 @@ def _run_rag_retrieval_experiment(
             cache_directory=model_cache,
             top_k=top_k,
             hybrid_candidate_k=hybrid_candidate_k,
+            rrf_k=rrf_k,
+        )
+    except (
+        EmbeddingError,
+        VectorStoreError,
+        OSError,
+        RuntimeError,
+        ValueError,
+    ) as error:
+        _print_error(_rag_error_code(error), str(error))
+        return EXIT_RAG_ERROR
+    print(result.model_dump_json(indent=2))
+    return EXIT_SUCCESS
+
+
+def _run_rag_rerank_experiment(
+    cases_path: Path,
+    *,
+    index_path: Path,
+    model_cache: Path,
+    top_k: int,
+    hybrid_candidate_k: int,
+    rrf_k: int,
+    reranker_model: str,
+    reranker_cache: Path,
+    rerank_candidate_k: int,
+) -> int:
+    """Compare Hybrid Search and Cross-Encoder reranking under shared settings."""
+    try:
+        result = run_rerank_experiment(
+            index_path,
+            load_evaluation_cases(cases_path),
+            cache_directory=model_cache,
+            reranker_cache_directory=reranker_cache,
+            reranker_model_name=reranker_model,
+            top_k=top_k,
+            hybrid_candidate_k=hybrid_candidate_k,
+            rerank_candidate_k=rerank_candidate_k,
             rrf_k=rrf_k,
         )
     except (
@@ -843,6 +939,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             retrieval_mode=arguments.retrieval_mode,
             hybrid_candidate_k=arguments.hybrid_candidate_k,
             rrf_k=arguments.rrf_k,
+            reranker_model=arguments.reranker_model,
+            reranker_cache=arguments.reranker_cache,
+            rerank_candidate_k=arguments.rerank_candidate_k,
         )
     if arguments.command == "rag-evaluate":
         return _run_rag_evaluate(
@@ -853,6 +952,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             retrieval_mode=arguments.retrieval_mode,
             hybrid_candidate_k=arguments.hybrid_candidate_k,
             rrf_k=arguments.rrf_k,
+            reranker_model=arguments.reranker_model,
+            reranker_cache=arguments.reranker_cache,
+            rerank_candidate_k=arguments.rerank_candidate_k,
         )
     if arguments.command == "rag-retrieval-experiment":
         return _run_rag_retrieval_experiment(
@@ -862,6 +964,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             top_k=arguments.top_k,
             hybrid_candidate_k=arguments.hybrid_candidate_k,
             rrf_k=arguments.rrf_k,
+        )
+    if arguments.command == "rag-rerank-experiment":
+        return _run_rag_rerank_experiment(
+            arguments.cases,
+            index_path=arguments.index_path,
+            model_cache=arguments.model_cache,
+            top_k=arguments.top_k,
+            hybrid_candidate_k=arguments.hybrid_candidate_k,
+            rrf_k=arguments.rrf_k,
+            reranker_model=arguments.reranker_model,
+            reranker_cache=arguments.reranker_cache,
+            rerank_candidate_k=arguments.rerank_candidate_k,
         )
     if arguments.command == "rag-chunk-experiment":
         return _run_rag_chunk_experiment(
