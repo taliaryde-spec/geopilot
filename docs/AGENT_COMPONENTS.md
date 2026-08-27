@@ -1,6 +1,6 @@
 # GeoPilot Agent 组件地图
 
-这份文档区分“已经形成第一条可运行闭环”和“完整大模型应用的全部组件”。第一条闭环是：自然语言问题 → LLM 规划与工具调用 → 人工审批 → 确定性 GIS 执行 → 验证 → 地图数据与报告。RAG、Embedding、跨会话长期记忆、系统化评测、Web UI 和 MCP 是后续独立阶段，不因第一条闭环跑通而自动视为完成。
+这份文档区分“已经形成第一条可运行闭环”和“完整大模型应用的全部组件”。第一条闭环是：自然语言问题 → LLM 规划与工具调用 → 人工审批 → 确定性 GIS 执行 → 验证 → 地图数据与报告。RAG 与 Embedding 已作为第二条知识链路接入；跨会话长期记忆、系统化 Agent 评测、Web UI 和 MCP 仍是后续独立阶段。
 
 ## 当前调用链
 
@@ -13,7 +13,9 @@ System Prompt + Agent Loop
     ↓
 LLM Adapter（DeepSeek / OpenRouter / OpenAI）
     ↕ Tool Calling
-数据检查 / CRS 推荐 / 结构化计划提交
+数据检查 / CRS 推荐 / 本地知识检索 / 结构化计划提交
+                    ↕
+        Chunking → Embedding → Vector Store
     ↓
 PlanStore（awaiting_approval → approved / rejected）
     ↓ execute
@@ -45,7 +47,12 @@ GeoPackage / GeoJSON / Markdown
 | Dispatcher | 已完成 | `src/geopilot/execution/dispatcher.py` | 将每种计划 operation 严格绑定到一个确定性 GIS 函数 |
 | 执行与恢复 | 已完成第一版 | `src/geopilot/execution/executor.py` | 顺序执行、失败停止、跳过已成功步骤并从检查点恢复 |
 | 运行存储 | 已完成第一版 | `src/geopilot/execution/store.py` | 保存 manifest、run 状态、工具结果元数据和产物路径 |
-| 用户入口 | CLI 已完成 | `src/geopilot/cli.py` | inspect、agent、show-plan、approve、reject、execute、show-run、resume |
+| 知识加载与切块 | 已完成第一版 | `src/geopilot/rag/loader.py`、`chunker.py` | 递归加载 Markdown/TXT，按标题层级切成稳定引用片段 |
+| Embedding | 已完成第一版 | `src/geopilot/rag/embeddings.py` | 使用本地 FastEmbed 区分 passage/query 角色生成中文向量 |
+| Vector Store | 已完成第一版 | `src/geopilot/rag/vector_store.py` | JSON 持久化、模型/维度校验和精确余弦相似度检索 |
+| RAG 服务与工具 | 已完成第一版 | `src/geopilot/rag/service.py`、`agent/tool_adapters.py` | 返回带来源引用的证据，并按索引存在性注册 Agent 工具 |
+| 检索评估 | 已完成第一版 | `src/geopilot/rag/evaluation.py`、`knowledge/retrieval_cases.json` | 按来源与章节计算 Hit Rate@K 和 MRR |
+| 用户入口 | CLI 已完成 | `src/geopilot/cli.py` | 原有 Agent/执行命令及 rag-build、rag-search、rag-evaluate |
 
 ## Memory 现在有什么
 
@@ -58,7 +65,7 @@ GeoPackage / GeoJSON / Markdown
 
 ## RAG、Embedding 在哪里
 
-当前尚未实现，路线图第 8 阶段会加入：
+第 8 阶段已经实现以下链路：
 
 ```text
 GIS 规范 / 项目文档 / 数据字典
@@ -69,12 +76,12 @@ Embedding
     ↓
 Vector Store
     ↓ 相似度检索 + 元数据过滤
-带来源引用的上下文
+带来源与章节引用的上下文
     ↓
 Planner / Agent
 ```
 
-GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和项目知识，不用于替代 GeoPandas 的数值计算。该阶段还会建立检索测试集，衡量 Recall@K、引用正确率和回答忠实度。
+GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和项目知识，不用于替代 GeoPandas 的数值计算。当前使用 6 条章节级样例衡量 Hit Rate@3 与 MRR；回答忠实度和引用正确率的 LLM-as-judge/人工评测将在完整 Eval 阶段加入。
 
 ## MCP 在哪里
 
@@ -82,11 +89,10 @@ GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和�
 
 ## 后续完整组件顺序
 
-1. RAG、Embedding、向量存储、引用和检索评测。
-2. 会话记忆、任务记忆、用户偏好与长期记忆边界。
-3. Eval、Tracing、日志、token/成本统计与回归数据集。
-4. FastAPI、Web GIS 图形界面、数据库和权限边界。
-5. Docker、CI/CD、安全检查和部署。
-6. MCP Server，将稳定 GIS 能力提供给外部 Agent。
+1. 会话记忆、任务记忆、用户偏好与长期记忆边界。
+2. Eval、Tracing、日志、token/成本统计与回归数据集。
+3. FastAPI、Web GIS 图形界面、数据库和权限边界。
+4. Docker、CI/CD、安全检查和部署。
+5. MCP Server，将稳定 GIS 能力提供给外部 Agent。
 
 这套顺序先保证 Agent 会正确计算和失败，再增加知识、记忆与产品界面，便于定位每个阶段的问题并形成可展示的工程提交历史。

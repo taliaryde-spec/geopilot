@@ -2,7 +2,7 @@
 
 GeoPilot 是一个自然语言驱动的地理空间分析 Agent。用户提供空间数据和分析问题，Agent 将检查数据、规划分析步骤、调用 GIS 工具、验证结果，并生成地图与报告。
 
-> 当前项目处于 v0.1 开发阶段。本仓库已经完成数据检查、真实 LLM Tool Calling 和确定性 CRS 推荐；自然语言规划与空间分析执行工具仍在持续实现。
+> 当前项目处于 v0.1 开发阶段。本仓库已经跑通自然语言规划、人工审批、确定性 GIS 执行、结果验证与报告，并加入了带引用的本地 RAG、中文 Embedding 和离线检索评估。
 
 ## 演示场景
 
@@ -22,6 +22,9 @@ GeoPilot 是一个自然语言驱动的地理空间分析 Agent。用户提供�
 - OpenAI Responses API、DeepSeek/OpenRouter Chat Completions 与结构化 Tool Calling
 - 基于数据范围确定性推荐米制投影 CRS，并禁止 Agent 猜测 EPSG 编号
 - 结构化分析计划、文件检查点与明确的批准/拒绝状态转换
+- 已批准计划的依赖编译、确定性执行、失败停止与检查点恢复
+- Markdown/TXT 知识加载、层级切块、本地中文 Embedding、向量检索与来源引用
+- RAG 的章节级 Hit Rate@K、MRR 离线评估及 Agent `search_knowledge` 工具
 - Ruff、Pyright 和 Pytest 质量检查
 
 完整组件规划与各阶段验收标准见 [GeoPilot 项目路线图](docs/PROJECT_ROADMAP.md)。
@@ -176,7 +179,7 @@ uv run geopilot reject plan_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx --reason "需要先
 - `export_web_geojson`：将验证结果重投影为 EPSG:4326，并原子写出 Web GeoJSON
 - `generate_coverage_report`：直接从验证结果汇总社区、人口、覆盖和设施计数，生成可复现 Markdown 报告
 
-确定性 GIS 工具层现已覆盖批准计划的全部 13 个步骤。下一阶段是 `ApprovedPlanExecutor`：它读取 `approved` 计划、为步骤建立产物依赖、调度工具、保存执行检查点，并在失败时停止而不是让 LLM 编造结果。
+确定性 GIS 工具层现已覆盖批准计划的全部 13 个步骤。`ApprovedPlanExecutor` 读取 `approved` 计划、为步骤建立产物依赖、调度工具、保存执行检查点，并在失败时停止而不是让 LLM 编造结果。
 
 ## 可执行计划编译
 
@@ -208,7 +211,35 @@ uv run geopilot show-run <run_id>
 uv run geopilot resume <run_id>
 ```
 
-完整 Agent 组件与当前完成边界见 `docs/AGENT_COMPONENTS.md`。第一条“问题 → 规划 → 审批 → 执行 → 报告”闭环已经具备，但 RAG、Embedding、跨会话长期记忆、系统化评测、Web UI 和 MCP 仍按路线图分阶段实现。
+完整 Agent 组件与当前完成边界见 `docs/AGENT_COMPONENTS.md`。第一条“问题 → 规划 → 审批 → 执行 → 报告”闭环和本地 RAG 已经具备；跨会话长期记忆、完整 Agent 评测、Web UI 和 MCP 仍按路线图分阶段实现。
+
+## 本地 RAG 与 Embedding
+
+GeoPilot 使用 RAG 检索 GIS 分析规则、项目数据字典和字段定义。RAG 只向模型提供有来源的知识证据，不代替数据检查、CRS 推荐或 GeoPandas 计算。
+
+首次构建本地知识索引：
+
+```powershell
+uv run geopilot rag-build knowledge
+```
+
+默认 Embedding 模型是 `BAAI/bge-small-zh-v1.5`。首次执行会下载模型到被 Git 忽略的 `artifacts/models/fastembed/`，并把可移植 JSON 向量索引写入 `artifacts/rag/index.json`。当前知识库包含 2 份文档、12 个标题感知片段和 512 维向量。
+
+直接检查检索结果和引用：
+
+```powershell
+uv run geopilot rag-search "为什么不能在 EPSG:4326 中直接做米制缓冲？" --top-k 3
+```
+
+运行章节级离线评估：
+
+```powershell
+uv run geopilot rag-evaluate knowledge/retrieval_cases.json --top-k 3
+```
+
+当前 6 条 GIS 检索样例的真实结果为 `Hit Rate@3 = 1.00`、`MRR = 0.9167`。评估要求来源文件和目标章节同时匹配，不只检查是否命中了同一份文档。
+
+索引存在时，普通 `agent` 命令会自动注册 `search_knowledge` 工具。模型可在解释 GIS 方法或项目字段前检索知识库，并收到 `source#标题层级 [chunk:n]` 形式的稳定引用；索引不存在时，Agent 仍可使用原有数据检查、CRS 推荐和计划工具。
 
 命令会向标准输出写入 JSON，其中包含：
 
@@ -228,6 +259,7 @@ uv run geopilot resume <run_id>
 - `8`：模型返回格式或 Agent 循环异常
 - `9`：计划不存在、状态转换冲突或计划文件无效
 - `10`：计划编译、执行检查点或 GIS 工具执行失败
+- `11`：知识加载、Embedding、向量索引、检索或 RAG 评估失败
 
 PowerShell 可以通过 `$LASTEXITCODE` 查看退出码；Windows CMD 可以运行 `echo %ERRORLEVEL%`。
 
@@ -248,8 +280,10 @@ src/geopilot/
 ├── cli.py                 # 命令行适配层
 ├── execution/             # 已批准计划编译、工具调度、运行检查点与恢复
 ├── models.py              # Pydantic 数据契约
+├── rag/                   # 文档加载、切块、Embedding、向量索引、检索与评估
 ├── tools/                 # 可独立测试的确定性 GIS 工具
 └── workflows/             # 组合多个工具的业务流水线
+knowledge/                 # GIS 知识文档与章节级检索评估集
 scripts/
 └── generate_sample_data.py
 examples/data/             # 可复现的虚构演示数据
@@ -275,6 +309,7 @@ uv run pytest -q
 - [x] 持久化计划检查点，并在执行前要求用户批准或拒绝
 - [x] 执行米制投影、缓冲区和空间连接
 - [x] 验证分析结果并输出 GeoJSON 与 Markdown 报告
+- [x] 本地 RAG、中文 Embedding、引用和章节级检索评估
 - [ ] 提供可交互的 Web 界面
 
 ## v0.1 验收标准

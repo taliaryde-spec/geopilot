@@ -1,0 +1,38 @@
+[
+  {
+    "case_id": "metric_crs",
+    "query": "为什么不能直接在 EPSG:4326 中计算米制缓冲区？",
+    "expected_source": "knowledge/gis_analysis_guidelines.md",
+    "expected_section": "坐标参考系与距离计算"
+  },
+  {
+    "case_id": "buffer_overlap",
+    "query": "多个设施缓冲区重叠时怎样避免覆盖面积重复计算？",
+    "expected_source": "knowledge/gis_analysis_guidelines.md",
+    "expected_section": "覆盖面积计算"
+  },
+  {
+    "case_id": "restore_zero_coverage",
+    "query": "空间求交后完全没有覆盖的社区为什么消失，应该怎样恢复？",
+    "expected_source": "knowledge/gis_analysis_guidelines.md",
+    "expected_section": "覆盖面积计算"
+  },
+  {
+    "case_id": "service_radius_field",
+    "query": "service_radius_m 字段是什么单位，允许负数吗？",
+    "expected_source": "knowledge/data_dictionary.md",
+    "expected_section": "facilities.csv 设施点"
+  },
+  {
+    "case_id": "demand_score",
+    "query": "demand_score 在示例社区数据里表示什么？",
+    "expected_source": "knowledge/data_dictionary.md",
+    "expected_section": "neighborhoods.geojson 社区面"
+  },
+  {
+    "case_id": "facility_neighborhood_key",
+    "query": "设施表是否自带 neighborhood_id，如何判断设施属于哪个社区？",
+    "expected_source": "knowledge/data_dictionary.md",
+    "expected_section": "facilities.csv 设施点"
+  }
+]

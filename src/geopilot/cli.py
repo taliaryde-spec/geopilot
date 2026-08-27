@@ -27,6 +27,18 @@ from geopilot.execution import (
     RunStoreError,
 )
 from geopilot.planning.store import PlanStore, PlanStoreError
+from geopilot.rag import (
+    DEFAULT_EMBEDDING_MODEL,
+    DEFAULT_KNOWLEDGE_INDEX,
+    DEFAULT_MODEL_CACHE,
+    EmbeddingError,
+    KnowledgeLoadError,
+    VectorStoreError,
+    build_knowledge_index,
+    evaluate_retrieval,
+    load_evaluation_cases,
+    open_knowledge_retriever,
+)
 from geopilot.tools.csv_point_loader import CsvPointLoadError
 from geopilot.workflows.dataset_intake import inspect_and_validate_dataset
 
@@ -39,6 +51,7 @@ EXIT_MODEL_ERROR = 7
 EXIT_AGENT_ERROR = 8
 EXIT_PLAN_ERROR = 9
 EXIT_EXECUTION_ERROR = 10
+EXIT_RAG_ERROR = 11
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -76,6 +89,18 @@ def build_parser() -> argparse.ArgumentParser:
     agent_parser.add_argument(
         "prompt",
         help="Natural-language GIS task for GeoPilot.",
+    )
+    agent_parser.add_argument(
+        "--knowledge-index",
+        type=Path,
+        default=DEFAULT_KNOWLEDGE_INDEX,
+        help="Optional local RAG index (default: artifacts/rag/index.json).",
+    )
+    agent_parser.add_argument(
+        "--model-cache",
+        type=Path,
+        default=DEFAULT_MODEL_CACHE,
+        help="Local FastEmbed model cache directory.",
     )
     agent_parser.add_argument(
         "--provider",
@@ -156,6 +181,40 @@ def build_parser() -> argparse.ArgumentParser:
     resume_parser.add_argument("run_id", help="Execution run identifier.")
     _add_plans_directory_argument(resume_parser)
     _add_runs_directory_argument(resume_parser)
+
+    rag_build_parser = subparsers.add_parser(
+        "rag-build",
+        help="Load, chunk, embed, and persist local knowledge documents.",
+    )
+    rag_build_parser.add_argument(
+        "sources",
+        nargs="+",
+        type=Path,
+        help="Markdown/text files or directories to index.",
+    )
+    _add_rag_index_arguments(rag_build_parser, include_model=True)
+    rag_build_parser.add_argument("--chunk-size", type=int, default=700)
+    rag_build_parser.add_argument("--chunk-overlap", type=int, default=100)
+
+    rag_search_parser = subparsers.add_parser(
+        "rag-search",
+        help="Search the local knowledge vector index with citations.",
+    )
+    rag_search_parser.add_argument("query", help="Knowledge retrieval query.")
+    _add_rag_index_arguments(rag_search_parser, include_model=False)
+    rag_search_parser.add_argument("--top-k", type=int, default=4)
+
+    rag_evaluate_parser = subparsers.add_parser(
+        "rag-evaluate",
+        help="Evaluate retrieval hit rate and reciprocal rank.",
+    )
+    rag_evaluate_parser.add_argument(
+        "cases",
+        type=Path,
+        help="JSON retrieval evaluation cases.",
+    )
+    _add_rag_index_arguments(rag_evaluate_parser, include_model=False)
+    rag_evaluate_parser.add_argument("--top-k", type=int, default=4)
     return parser
 
 
@@ -177,6 +236,32 @@ def _add_runs_directory_argument(parser: argparse.ArgumentParser) -> None:
         default=Path("artifacts") / "runs",
         help="Execution checkpoint directory (default: artifacts/runs).",
     )
+
+
+def _add_rag_index_arguments(
+    parser: argparse.ArgumentParser,
+    *,
+    include_model: bool,
+) -> None:
+    """Add shared local knowledge index and model cache options."""
+    parser.add_argument(
+        "--index-path",
+        type=Path,
+        default=DEFAULT_KNOWLEDGE_INDEX,
+        help="Local vector index path (default: artifacts/rag/index.json).",
+    )
+    parser.add_argument(
+        "--model-cache",
+        type=Path,
+        default=DEFAULT_MODEL_CACHE,
+        help="Local FastEmbed model cache directory.",
+    )
+    if include_model:
+        parser.add_argument(
+            "--embedding-model",
+            default=DEFAULT_EMBEDDING_MODEL,
+            help=f"Embedding model (default: {DEFAULT_EMBEDDING_MODEL}).",
+        )
 
 
 def _run_inspect(
@@ -260,6 +345,8 @@ def _run_agent(
     base_url: str | None,
     max_turns: int,
     max_output_tokens: int | None,
+    knowledge_index: Path,
+    model_cache: Path,
 ) -> int:
     """Run the real-model Agent command and print its final answer."""
     try:
@@ -269,9 +356,17 @@ def _run_agent(
             base_url=base_url,
             max_output_tokens=max_output_tokens,
         )
+        knowledge_retriever = (
+            open_knowledge_retriever(
+                index_path=knowledge_index,
+                cache_directory=model_cache,
+            )
+            if knowledge_index.is_file()
+            else None
+        )
         runner = AgentRunner(
             build_model(settings),
-            build_default_tool_registry(),
+            build_default_tool_registry(knowledge_retriever=knowledge_retriever),
             max_model_turns=max_turns,
         )
         result = runner.run(prompt)
@@ -287,6 +382,9 @@ def _run_agent(
     except (AgentProtocolError, ModelResponseError) as error:
         _print_error("agent_runtime_error", str(error))
         return EXIT_AGENT_ERROR
+    except (EmbeddingError, VectorStoreError) as error:
+        _print_error(error.code.value, str(error))
+        return EXIT_RAG_ERROR
     except ValueError as error:
         _print_error("invalid_agent_input", str(error))
         return EXIT_INPUT_ERROR
@@ -381,6 +479,103 @@ def _run_resume(run_id: str, plans_dir: Path, runs_dir: Path) -> int:
     return EXIT_EXECUTION_ERROR
 
 
+def _rag_error_code(error: Exception) -> str:
+    code = getattr(error, "code", None)
+    value = getattr(code, "value", None)
+    return str(value) if isinstance(value, str) else "rag_runtime_error"
+
+
+def _run_rag_build(
+    sources: list[Path],
+    *,
+    index_path: Path,
+    model_cache: Path,
+    embedding_model: str,
+    chunk_size: int,
+    chunk_overlap: int,
+) -> int:
+    """Build a local vector index and print its manifest summary."""
+    try:
+        result = build_knowledge_index(
+            sources,
+            index_path=index_path,
+            model_name=embedding_model,
+            cache_directory=model_cache,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            working_directory=Path.cwd(),
+        )
+    except (
+        KnowledgeLoadError,
+        EmbeddingError,
+        VectorStoreError,
+        OSError,
+        RuntimeError,
+        ValueError,
+    ) as error:
+        _print_error(_rag_error_code(error), str(error))
+        return EXIT_RAG_ERROR
+    print(result.model_dump_json(indent=2))
+    return EXIT_SUCCESS
+
+
+def _run_rag_search(
+    query: str,
+    *,
+    index_path: Path,
+    model_cache: Path,
+    top_k: int,
+) -> int:
+    """Query a local vector index and print ranked citation evidence."""
+    try:
+        result = open_knowledge_retriever(
+            index_path=index_path,
+            cache_directory=model_cache,
+        ).search(query, top_k=top_k)
+    except (
+        EmbeddingError,
+        VectorStoreError,
+        OSError,
+        RuntimeError,
+        ValueError,
+    ) as error:
+        _print_error(_rag_error_code(error), str(error))
+        return EXIT_RAG_ERROR
+    print(result.model_dump_json(indent=2))
+    return EXIT_SUCCESS
+
+
+def _run_rag_evaluate(
+    cases_path: Path,
+    *,
+    index_path: Path,
+    model_cache: Path,
+    top_k: int,
+) -> int:
+    """Run an offline retrieval evaluation against the local index."""
+    try:
+        retriever = open_knowledge_retriever(
+            index_path=index_path,
+            cache_directory=model_cache,
+        )
+        result = evaluate_retrieval(
+            retriever,
+            load_evaluation_cases(cases_path),
+            top_k=top_k,
+        )
+    except (
+        EmbeddingError,
+        VectorStoreError,
+        OSError,
+        RuntimeError,
+        ValueError,
+    ) as error:
+        _print_error(_rag_error_code(error), str(error))
+        return EXIT_RAG_ERROR
+    print(result.model_dump_json(indent=2))
+    return EXIT_SUCCESS
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the GeoPilot command-line entry point."""
     parser = build_parser()
@@ -400,6 +595,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             base_url=arguments.base_url,
             max_turns=arguments.max_turns,
             max_output_tokens=arguments.max_output_tokens,
+            knowledge_index=arguments.knowledge_index,
+            model_cache=arguments.model_cache,
         )
     if arguments.command == "show-plan":
         return _run_show_plan(arguments.plan_id, arguments.plans_dir)
@@ -424,6 +621,29 @@ def main(argv: Sequence[str] | None = None) -> int:
             arguments.run_id,
             arguments.plans_dir,
             arguments.runs_dir,
+        )
+    if arguments.command == "rag-build":
+        return _run_rag_build(
+            arguments.sources,
+            index_path=arguments.index_path,
+            model_cache=arguments.model_cache,
+            embedding_model=arguments.embedding_model,
+            chunk_size=arguments.chunk_size,
+            chunk_overlap=arguments.chunk_overlap,
+        )
+    if arguments.command == "rag-search":
+        return _run_rag_search(
+            arguments.query,
+            index_path=arguments.index_path,
+            model_cache=arguments.model_cache,
+            top_k=arguments.top_k,
+        )
+    if arguments.command == "rag-evaluate":
+        return _run_rag_evaluate(
+            arguments.cases,
+            index_path=arguments.index_path,
+            model_cache=arguments.model_cache,
+            top_k=arguments.top_k,
         )
 
     parser.print_help()

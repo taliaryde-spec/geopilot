@@ -18,6 +18,10 @@ from geopilot.agent.runner import (
 )
 from geopilot.agent.tool_adapters import build_default_tool_registry
 from geopilot.planning.store import PlanStore
+from geopilot.rag.chunker import chunk_knowledge_documents
+from geopilot.rag.loader import load_knowledge_document
+from geopilot.rag.service import KnowledgeRetriever
+from geopilot.rag.vector_store import LocalVectorStore
 
 SAMPLE_DATASET = (
     Path(__file__).resolve().parents[1] / "examples" / "data" / "facilities.csv"
@@ -40,6 +44,20 @@ class ScriptedChatModel:
         if not self._responses:
             raise AssertionError("Scripted model has no response left")
         return self._responses.pop(0)
+
+
+class AgentTestEmbeddingProvider:
+    """Deterministic vectors for testing the Agent retrieval adapter."""
+
+    @property
+    def model_name(self) -> str:
+        return "agent-test-embedding"
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [[1.0, 0.0] for _ in texts]
+
+    def embed_query(self, query: str) -> list[float]:
+        return [1.0, 0.0]
 
 
 def test_agent_calls_dataset_tool_and_returns_final_answer() -> None:
@@ -115,6 +133,52 @@ def test_agent_calls_metric_crs_tool_and_returns_computed_epsg() -> None:
         "recommend_metric_crs",
         "submit_analysis_plan",
     ]
+
+
+def test_agent_searches_local_knowledge_with_citations(tmp_path: Path) -> None:
+    knowledge_path = tmp_path / "gis_rules.md"
+    knowledge_path.write_text(
+        "# GIS 规则\n\n## 距离分析\n\nEPSG:4326 下不能直接执行米制缓冲。",
+        encoding="utf-8",
+    )
+    chunks = chunk_knowledge_documents(
+        [load_knowledge_document(knowledge_path, working_directory=tmp_path)]
+    )
+    store = LocalVectorStore(tmp_path / "index.json", AgentTestEmbeddingProvider())
+    store.build(chunks)
+    model = ScriptedChatModel(
+        [
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="call-knowledge",
+                        name="search_knowledge",
+                        arguments={"query": "米制缓冲的 CRS 要求", "top_k": 1},
+                    )
+                ]
+            ),
+            ModelResponse(content="知识库说明应先转换到米制投影坐标系。"),
+        ]
+    )
+    runner = AgentRunner(
+        model,
+        build_default_tool_registry(knowledge_retriever=KnowledgeRetriever(store)),
+    )
+
+    result = runner.run("为什么不能直接缓冲？")
+
+    assert result.tool_results[0].success is True
+    assert result.tool_results[0].output is not None
+    assert result.tool_results[0].output["hits"][0]["citation"] == (
+        "gis_rules.md#GIS 规则 > 距离分析 [chunk:1]"
+    )
+    assert [definition.name for definition in model.requests[0][1]] == [
+        "inspect_dataset",
+        "search_knowledge",
+        "recommend_metric_crs",
+        "submit_analysis_plan",
+    ]
+    assert "search_knowledge" in (model.requests[0][0][0].content or "")
 
 
 def test_agent_submits_structured_plan_for_human_approval(

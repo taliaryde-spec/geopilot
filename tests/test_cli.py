@@ -18,6 +18,7 @@ from geopilot.cli import (
     EXIT_FILE_NOT_FOUND,
     EXIT_INPUT_ERROR,
     EXIT_PLAN_ERROR,
+    EXIT_RAG_ERROR,
     EXIT_SUCCESS,
     EXIT_VALIDATION_ERROR,
     main,
@@ -66,6 +67,29 @@ def test_main_without_command_prints_help(
     assert "execute" in captured.out
     assert "show-run" in captured.out
     assert "resume" in captured.out
+    assert "rag-build" in captured.out
+    assert "rag-search" in captured.out
+    assert "rag-evaluate" in captured.out
+
+
+def test_rag_search_reports_missing_index(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = main(
+        [
+            "rag-search",
+            "为什么需要米制 CRS？",
+            "--index-path",
+            str(tmp_path / "missing-index.json"),
+        ]
+    )
+    captured = capsys.readouterr()
+    payload = json.loads(captured.err)
+
+    assert exit_code == EXIT_RAG_ERROR
+    assert captured.out == ""
+    assert payload["error"]["code"] == "vector_index_not_found"
 
 
 def test_main_reports_missing_model_configuration(

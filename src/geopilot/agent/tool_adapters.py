@@ -12,6 +12,7 @@ from geopilot.planning.models import (
     PlanRiskLevel,
 )
 from geopilot.planning.store import PlanStore
+from geopilot.rag.service import KnowledgeRetriever
 from geopilot.tools.crs_recommender import recommend_metric_crs
 from geopilot.workflows.dataset_intake import inspect_and_validate_dataset
 
@@ -41,6 +42,21 @@ class RecommendMetricCrsArguments(BaseModel):
     latitude_column: str = Field(
         default="latitude",
         description="Latitude column used for CSV input",
+    )
+
+
+class SearchKnowledgeArguments(BaseModel):
+    """Arguments accepted by the optional search_knowledge Agent tool."""
+
+    query: str = Field(
+        min_length=1,
+        description="Focused GIS method, field-definition, or project-knowledge query",
+    )
+    top_k: int = Field(
+        default=4,
+        ge=1,
+        le=8,
+        description="Maximum citation-bearing chunks to retrieve",
     )
 
 
@@ -109,6 +125,7 @@ def _submit_analysis_plan(
 def build_default_tool_registry(
     *,
     plan_store: PlanStore | None = None,
+    knowledge_retriever: KnowledgeRetriever | None = None,
 ) -> ToolRegistry:
     """Return the tools currently available to the GeoPilot Agent."""
     selected_plan_store = plan_store or PlanStore(Path("artifacts") / "plans")
@@ -129,6 +146,29 @@ def build_default_tool_registry(
             recoverable_errors=(OSError, ValueError),
         )
     )
+    if knowledge_retriever is not None:
+
+        def search_knowledge(arguments: BaseModel) -> BaseModel:
+            parameters = SearchKnowledgeArguments.model_validate(arguments)
+            return knowledge_retriever.search(
+                parameters.query,
+                top_k=parameters.top_k,
+            )
+
+        registry.register(
+            AgentTool(
+                name="search_knowledge",
+                description=(
+                    "Search the local GIS knowledge base for methods, field "
+                    "definitions, assumptions, and project rules. Return "
+                    "citation-bearing evidence; do not use it as a substitute "
+                    "for inspecting or calculating spatial data."
+                ),
+                input_model=SearchKnowledgeArguments,
+                handler=search_knowledge,
+                recoverable_errors=(OSError, ValueError),
+            )
+        )
     registry.register(
         AgentTool(
             name="recommend_metric_crs",
