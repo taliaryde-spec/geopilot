@@ -241,6 +241,22 @@ def test_plan_rejects_multiple_inputs_for_single_dataset_tool() -> None:
         validate_analysis_plan(proposal)
 
 
+def test_plan_rejects_two_inputs_for_coverage_metrics() -> None:
+    proposal = build_proposal(
+        [
+            build_step(
+                1,
+                AnalysisOperation.CALCULATE_COVERAGE_METRICS,
+                ["coverage_intersection", "neighborhoods_area"],
+                coverage_metric_parameters(),
+            )
+        ]
+    )
+
+    with pytest.raises(PlanSemanticError, match="exactly 1 input"):
+        validate_analysis_plan(proposal)
+
+
 def test_plan_rejects_noncanonical_result_check_names() -> None:
     proposal = build_proposal(
         [
