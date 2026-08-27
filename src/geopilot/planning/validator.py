@@ -74,11 +74,11 @@ def _validate_geometry_area(parameters: dict[str, Any]) -> None:
 
 def _validate_buffer(parameters: dict[str, Any]) -> None:
     issues: list[str] = []
-    has_distance = parameters.get("distance") is not None
     has_distance_field = bool(parameters.get("distance_field"))
-    if has_distance == has_distance_field:
+    if not has_distance_field:
         issues.append(
-            "Operation 'buffer' requires exactly one of 'distance' or 'distance_field'."
+            "Operation 'buffer' requires parameter 'distance_field'; constant "
+            "distance buffers are not supported by the current executor."
         )
     unit = parameters.get("unit")
     if unit is None or unit == "":
@@ -106,6 +106,11 @@ def _validate_dissolve(parameters: dict[str, Any]) -> None:
             "Coverage buffers must use dissolve method='union_all' to prevent "
             "overlap double-counting.",
         )
+    _require_parameter(
+        parameters,
+        "crs",
+        operation=AnalysisOperation.DISSOLVE,
+    )
 
 
 def _validate_overlay(parameters: dict[str, Any]) -> None:
@@ -119,6 +124,11 @@ def _validate_overlay(parameters: dict[str, Any]) -> None:
             PlanSemanticErrorCode.INVALID_OPERATION_PARAMETERS,
             "Operation 'overlay_intersection' requires how='intersection'.",
         )
+    _require_parameter(
+        parameters,
+        "crs",
+        operation=AnalysisOperation.OVERLAY_INTERSECTION,
+    )
 
 
 def _validate_spatial_join(parameters: dict[str, Any]) -> None:
@@ -131,9 +141,23 @@ def _validate_spatial_join(parameters: dict[str, Any]) -> None:
     how = parameters.get("how")
     if how is None or how == "":
         issues.append("Operation 'spatial_join' requires parameter 'how'.")
-    elif how not in {"left", "inner", "right"}:
-        issues.append("Operation 'spatial_join' how must be left, inner, or right.")
-    for name in ("predicate", "left_suffix", "right_suffix"):
+    elif how != "left":
+        issues.append("Operation 'spatial_join' requires how='left'.")
+    predicate = parameters.get("predicate")
+    if predicate is not None and predicate != "intersects":
+        issues.append("Operation 'spatial_join' requires predicate='intersects'.")
+    aggregation = parameters.get("aggregation")
+    if aggregation is not None and aggregation != "count":
+        issues.append("Operation 'spatial_join' requires aggregation='count'.")
+    for name in (
+        "predicate",
+        "aggregation",
+        "key_field",
+        "output_field",
+        "crs",
+        "left_suffix",
+        "right_suffix",
+    ):
         if not parameters.get(name):
             issues.append(f"Operation 'spatial_join' requires parameter {name!r}.")
     if issues:
@@ -145,12 +169,14 @@ def _validate_spatial_join(parameters: dict[str, Any]) -> None:
 
 def _validate_coverage_metrics(parameters: dict[str, Any]) -> None:
     required_parameters = (
+        "key_field",
         "intersection_area_field",
         "total_area_field",
         "coverage_ratio_field",
         "population_field",
         "estimated_covered_population_field",
         "population_method",
+        "crs",
     )
     missing_parameters = [
         name for name in required_parameters if not parameters.get(name)
@@ -186,6 +212,7 @@ def _validate_attribute_join(parameters: dict[str, Any]) -> None:
     for name in (
         "left_key",
         "right_key",
+        "crs",
         "left_suffix",
         "right_suffix",
     ):
@@ -200,9 +227,13 @@ def _validate_attribute_join(parameters: dict[str, Any]) -> None:
 
 def _validate_restore_uncovered(parameters: dict[str, Any]) -> None:
     issues: list[str] = []
-    if not parameters.get("key"):
+    if not parameters.get("key_field"):
         issues.append(
-            "Operation 'restore_uncovered_features' requires parameter 'key'."
+            "Operation 'restore_uncovered_features' requires parameter 'key_field'."
+        )
+    if not parameters.get("crs"):
+        issues.append(
+            "Operation 'restore_uncovered_features' requires parameter 'crs'."
         )
     fill_defaults = parameters.get("fill_defaults")
     if not isinstance(fill_defaults, dict) or not fill_defaults:
@@ -253,6 +284,19 @@ def _validate_result(parameters: dict[str, Any]) -> None:
             PlanSemanticErrorCode.INVALID_OPERATION_PARAMETERS,
             " ".join(issues),
         )
+    for name in (
+        "covered_area_field",
+        "coverage_ratio_field",
+        "population_field",
+        "estimated_covered_population_field",
+        "facility_count_field",
+        "crs",
+    ):
+        _require_parameter(
+            parameters,
+            name,
+            operation=AnalysisOperation.VALIDATE_RESULT,
+        )
 
 
 def _validate_export_geojson(parameters: dict[str, Any]) -> None:
@@ -269,6 +313,29 @@ def _validate_export_geojson(parameters: dict[str, Any]) -> None:
         )
 
 
+def _validate_generate_report(parameters: dict[str, Any]) -> None:
+    for name in (
+        "neighborhood_key_field",
+        "population_field",
+        "covered_area_field",
+        "coverage_ratio_field",
+        "estimated_covered_population_field",
+        "facility_count_field",
+        "analysis_crs",
+        "export_crs",
+    ):
+        _require_parameter(
+            parameters,
+            name,
+            operation=AnalysisOperation.GENERATE_REPORT,
+        )
+    if parameters.get("export_crs") != "EPSG:4326":
+        raise PlanSemanticError(
+            PlanSemanticErrorCode.INVALID_OPERATION_PARAMETERS,
+            "Coverage report requires export_crs='EPSG:4326'.",
+        )
+
+
 _OPERATION_VALIDATORS = {
     AnalysisOperation.REPROJECT: _validate_reproject,
     AnalysisOperation.CALCULATE_GEOMETRY_AREA: _validate_geometry_area,
@@ -281,6 +348,7 @@ _OPERATION_VALIDATORS = {
     AnalysisOperation.ATTRIBUTE_JOIN: _validate_attribute_join,
     AnalysisOperation.VALIDATE_RESULT: _validate_result,
     AnalysisOperation.EXPORT_GEOJSON: _validate_export_geojson,
+    AnalysisOperation.GENERATE_REPORT: _validate_generate_report,
 }
 
 _EXPECTED_INPUT_COUNTS = {
@@ -296,6 +364,7 @@ _EXPECTED_INPUT_COUNTS = {
     AnalysisOperation.ATTRIBUTE_JOIN: 2,
     AnalysisOperation.VALIDATE_RESULT: 1,
     AnalysisOperation.EXPORT_GEOJSON: 1,
+    AnalysisOperation.GENERATE_REPORT: 1,
 }
 
 

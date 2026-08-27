@@ -203,6 +203,10 @@ def test_agent_can_correct_plan_after_semantic_validation_error(
                 "parameters": {
                     "how": "left",
                     "predicate": "intersects",
+                    "aggregation": "count",
+                    "key_field": "neighborhood_id",
+                    "output_field": "facility_count",
+                    "crs": "EPSG:32651",
                     "left_suffix": "neighborhood",
                     "right_suffix": "facility",
                 },

@@ -14,6 +14,7 @@ from geopilot.agent.models import ModelResponse, ToolCall
 from geopilot.cli import (
     EXIT_AGENT_ERROR,
     EXIT_CONFIGURATION_ERROR,
+    EXIT_EXECUTION_ERROR,
     EXIT_FILE_NOT_FOUND,
     EXIT_INPUT_ERROR,
     EXIT_PLAN_ERROR,
@@ -62,6 +63,9 @@ def test_main_without_command_prints_help(
     assert "show-plan" in captured.out
     assert "approve" in captured.out
     assert "reject" in captured.out
+    assert "execute" in captured.out
+    assert "show-run" in captured.out
+    assert "resume" in captured.out
 
 
 def test_main_reports_missing_model_configuration(
@@ -374,3 +378,90 @@ def test_main_reports_missing_analysis_plan(
     assert exit_code == EXIT_PLAN_ERROR
     assert captured.out == ""
     assert payload["error"]["code"] == "plan_not_found"
+
+
+def test_main_executes_approved_plan_and_shows_run(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = tmp_path / "facilities.geojson"
+    gpd.GeoDataFrame(
+        {"facility_id": [1]},
+        geometry=[Point(121.47, 31.23)],
+        crs="EPSG:4326",
+    ).to_file(source, driver="GeoJSON")
+    plans_dir = tmp_path / "plans"
+    runs_dir = tmp_path / "runs"
+    store = PlanStore(plans_dir, id_factory=lambda: "plan_cli_execute")
+    proposal = AnalysisPlanProposal(
+        user_goal="重投影设施数据",
+        datasets=[str(source)],
+        steps=[
+            AnalysisPlanStep(
+                step_id=1,
+                operation=AnalysisOperation.REPROJECT,
+                description="转换到米制坐标系。",
+                inputs=[str(source)],
+                parameters={"target_crs": "EPSG:32651"},
+                output="facilities_projected",
+                expected_output="米制设施图层",
+            )
+        ],
+        expected_outputs=["米制设施图层"],
+    )
+    plan = store.create(proposal)
+    store.approve(plan.plan_id)
+
+    exit_code = main(
+        [
+            "execute",
+            plan.plan_id,
+            "--plans-dir",
+            str(plans_dir),
+            "--runs-dir",
+            str(runs_dir),
+        ]
+    )
+    captured = capsys.readouterr()
+    run_payload = json.loads(captured.out)
+
+    assert exit_code == EXIT_SUCCESS
+    assert captured.err == ""
+    assert run_payload["status"] == "succeeded"
+    run_id = run_payload["run_id"]
+
+    show_exit_code = main(["show-run", run_id, "--runs-dir", str(runs_dir)])
+    show_capture = capsys.readouterr()
+    shown_payload = json.loads(show_capture.out)
+
+    assert show_exit_code == EXIT_SUCCESS
+    assert shown_payload["run_id"] == run_id
+    assert shown_payload["steps"][0]["status"] == "succeeded"
+
+
+def test_main_rejects_execution_of_legacy_plan_without_outputs(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plans_dir = tmp_path / "plans"
+    runs_dir = tmp_path / "runs"
+    store = PlanStore(plans_dir, id_factory=lambda: "plan_cli_legacy")
+    plan_id = build_cli_plan(store)
+    store.approve(plan_id)
+
+    exit_code = main(
+        [
+            "execute",
+            plan_id,
+            "--plans-dir",
+            str(plans_dir),
+            "--runs-dir",
+            str(runs_dir),
+        ]
+    )
+    captured = capsys.readouterr()
+    payload = json.loads(captured.err)
+
+    assert exit_code == EXIT_EXECUTION_ERROR
+    assert captured.out == ""
+    assert payload["error"]["code"] == "legacy_plan_missing_output"

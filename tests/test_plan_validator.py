@@ -44,19 +44,22 @@ def build_proposal(steps: list[AnalysisPlanStep]) -> AnalysisPlanProposal:
 def coverage_metric_parameters() -> dict[str, object]:
     """Return the explicit formula fields required for coverage metrics."""
     return {
+        "key_field": "neighborhood_id",
         "intersection_area_field": "covered_area_m2",
         "total_area_field": "neighborhood_area_m2",
         "coverage_ratio_field": "coverage_ratio",
         "population_field": "population",
         "estimated_covered_population_field": "estimated_covered_population",
         "population_method": "area_weighted_uniform_density",
+        "crs": "EPSG:32651",
     }
 
 
 def uncovered_restore_parameters() -> dict[str, object]:
     """Return the zero defaults required for completely uncovered targets."""
     return {
-        "key": "neighborhood_id",
+        "key_field": "neighborhood_id",
+        "crs": "EPSG:32651",
         "fill_defaults": {
             "covered_area_m2": 0,
             "coverage_ratio": 0,
@@ -101,7 +104,7 @@ def test_plan_rejects_coverage_metrics_without_dissolved_buffers() -> None:
                 2,
                 AnalysisOperation.OVERLAY_INTERSECTION,
                 ["projected_neighborhoods", "buffers"],
-                {"how": "intersection"},
+                {"how": "intersection", "crs": "EPSG:32651"},
             ),
             build_step(
                 3,
@@ -136,13 +139,13 @@ def test_plan_rejects_coverage_total_area_without_pre_overlay_lineage() -> None:
                 2,
                 AnalysisOperation.DISSOLVE,
                 ["facility_buffers"],
-                {"method": "union_all"},
+                {"method": "union_all", "crs": "EPSG:32651"},
             ),
             build_step(
                 3,
                 AnalysisOperation.OVERLAY_INTERSECTION,
                 ["projected_neighborhoods", "dissolved_buffers"],
-                {"how": "intersection"},
+                {"how": "intersection", "crs": "EPSG:32651"},
             ),
             build_step(
                 4,
@@ -189,13 +192,13 @@ def test_plan_reports_multiple_semantic_errors_in_one_response() -> None:
                 2,
                 AnalysisOperation.DISSOLVE,
                 ["facility_buffers"],
-                {"method": "union_all"},
+                {"method": "union_all", "crs": "EPSG:32651"},
             ),
             build_step(
                 3,
                 AnalysisOperation.OVERLAY_INTERSECTION,
                 ["projected_neighborhoods", "dissolved_buffers"],
-                {"how": "intersection"},
+                {"how": "intersection", "crs": "EPSG:32651"},
             ),
             build_step(
                 4,
@@ -292,13 +295,13 @@ def test_plan_rejects_unmerged_metrics_and_facility_counts() -> None:
                 3,
                 AnalysisOperation.DISSOLVE,
                 ["facility_buffers"],
-                {"method": "union_all"},
+                {"method": "union_all", "crs": "EPSG:32651"},
             ),
             build_step(
                 4,
                 AnalysisOperation.OVERLAY_INTERSECTION,
                 ["projected_neighborhoods", "dissolved_buffers"],
-                {"how": "intersection"},
+                {"how": "intersection", "crs": "EPSG:32651"},
             ),
             build_step(
                 5,
@@ -319,6 +322,10 @@ def test_plan_rejects_unmerged_metrics_and_facility_counts() -> None:
                 {
                     "how": "left",
                     "predicate": "intersects",
+                    "aggregation": "count",
+                    "key_field": "neighborhood_id",
+                    "output_field": "facility_count",
+                    "crs": "EPSG:32651",
                     "left_suffix": "neighborhood",
                     "right_suffix": "facility",
                 },
@@ -360,13 +367,13 @@ def test_plan_rejects_missing_uncovered_feature_restore() -> None:
                 3,
                 AnalysisOperation.DISSOLVE,
                 ["facility_buffers"],
-                {"method": "union_all"},
+                {"method": "union_all", "crs": "EPSG:32651"},
             ),
             build_step(
                 4,
                 AnalysisOperation.OVERLAY_INTERSECTION,
                 ["projected_neighborhoods", "dissolved_buffers"],
-                {"how": "intersection"},
+                {"how": "intersection", "crs": "EPSG:32651"},
             ),
             build_step(
                 5,
@@ -411,13 +418,13 @@ def test_plan_rejects_incomplete_uncovered_feature_defaults() -> None:
                 3,
                 AnalysisOperation.DISSOLVE,
                 ["facility_buffers"],
-                {"method": "union_all"},
+                {"method": "union_all", "crs": "EPSG:32651"},
             ),
             build_step(
                 4,
                 AnalysisOperation.OVERLAY_INTERSECTION,
                 ["projected_neighborhoods", "dissolved_buffers"],
-                {"how": "intersection"},
+                {"how": "intersection", "crs": "EPSG:32651"},
             ),
             build_step(
                 5,
@@ -430,7 +437,8 @@ def test_plan_rejects_incomplete_uncovered_feature_defaults() -> None:
                 AnalysisOperation.RESTORE_UNCOVERED_FEATURES,
                 ["projected_neighborhoods", "coverage_metrics"],
                 {
-                    "key": "neighborhood_id",
+                    "key_field": "neighborhood_id",
+                    "crs": "EPSG:32651",
                     "fill_defaults": {
                         "covered_area_m2": 0,
                         "estimated_covered_population": 0,
@@ -474,13 +482,13 @@ def test_plan_rejects_restore_without_complete_target_polygons() -> None:
                 3,
                 AnalysisOperation.DISSOLVE,
                 ["facility_buffers"],
-                {"method": "union_all"},
+                {"method": "union_all", "crs": "EPSG:32651"},
             ),
             build_step(
                 4,
                 AnalysisOperation.OVERLAY_INTERSECTION,
                 ["projected_neighborhoods", "dissolved_buffers"],
-                {"how": "intersection"},
+                {"how": "intersection", "crs": "EPSG:32651"},
             ),
             build_step(
                 5,
@@ -531,13 +539,13 @@ def test_plan_accepts_safe_area_coverage_sequence() -> None:
                 3,
                 AnalysisOperation.DISSOLVE,
                 ["facility_buffers"],
-                {"method": "union_all"},
+                {"method": "union_all", "crs": "EPSG:32651"},
             ),
             build_step(
                 4,
                 AnalysisOperation.OVERLAY_INTERSECTION,
                 ["projected_neighborhoods", "dissolved_buffers"],
-                {"how": "intersection"},
+                {"how": "intersection", "crs": "EPSG:32651"},
             ),
             build_step(
                 5,
@@ -558,6 +566,10 @@ def test_plan_accepts_safe_area_coverage_sequence() -> None:
                 {
                     "how": "left",
                     "predicate": "intersects",
+                    "aggregation": "count",
+                    "key_field": "neighborhood_id",
+                    "output_field": "facility_count",
+                    "crs": "EPSG:32651",
                     "left_suffix": "neighborhood",
                     "right_suffix": "facility",
                 },
@@ -570,6 +582,7 @@ def test_plan_accepts_safe_area_coverage_sequence() -> None:
                     "how": "left",
                     "left_key": "neighborhood_id",
                     "right_key": "neighborhood_id",
+                    "crs": "EPSG:32651",
                     "left_suffix": "coverage",
                     "right_suffix": "facility_count",
                 },
@@ -584,7 +597,13 @@ def test_plan_accepts_safe_area_coverage_sequence() -> None:
                         "no_null_metrics",
                         "coverage_ratio_between_0_and_1",
                         "covered_population_not_above_population",
-                    ]
+                    ],
+                    "covered_area_field": "covered_area_m2",
+                    "coverage_ratio_field": "coverage_ratio",
+                    "population_field": "population",
+                    "estimated_covered_population_field": "estimated_covered_population",
+                    "facility_count_field": "facility_count",
+                    "crs": "EPSG:32651",
                 },
             ),
             build_step(

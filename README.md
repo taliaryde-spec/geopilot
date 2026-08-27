@@ -191,9 +191,24 @@ uv run geopilot reject plan_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx --reason "需要先
 }
 ```
 
-`src/geopilot/execution/compiler.py` 只编译 `approved` 计划，并拒绝缺少产物 ID、重复输出、覆盖原始数据集名称、引用未来步骤或使用规划期工具的计划。旧计划仍能查看和保留审批记录，但缺少 `output` 时不会被猜测执行，需要用 Prompt 0.5.0 或更高版本重新生成。
+`src/geopilot/execution/compiler.py` 只编译 `approved` 计划，并拒绝缺少产物 ID、重复输出、覆盖原始数据集名称、引用未来步骤或使用规划期工具的计划。旧计划仍能查看和保留审批记录，但缺少 `output` 时不会被猜测执行，需要用 Prompt 0.6.0 或更高版本重新生成。
 
-`src/geopilot/execution/models.py` 定义了 GeoPackage、GeoJSON、Markdown 三类产物，以及 `pending → running → succeeded/failed` 的运行和步骤检查点状态。下一批将实现运行存储与确定性工具调度器。
+`src/geopilot/execution/models.py` 定义了 GeoPackage、GeoJSON、Markdown 三类产物，以及 `pending → running → succeeded/failed` 的运行和步骤检查点状态。
+
+`src/geopilot/execution/dispatcher.py` 将每个 operation 严格绑定到一个确定性 GIS 工具；`executor.py` 顺序执行计划、失败即停止，并在恢复时跳过产物仍然存在的成功步骤；`store.py` 原子保存 manifest、run checkpoint 和工具结果元数据。Prompt 0.6.0 与计划语义校验器要求提供真实工具所需的完整字段和 CRS 参数，避免“计划看起来合理但函数无法调用”。
+
+```powershell
+# 只执行已经人工批准的计划
+uv run geopilot execute <plan_id>
+
+# 查看每一步状态、错误和产物路径
+uv run geopilot show-run <run_id>
+
+# 修复临时文件、环境或依赖问题后，从第一个未完成步骤恢复
+uv run geopilot resume <run_id>
+```
+
+完整 Agent 组件与当前完成边界见 `docs/AGENT_COMPONENTS.md`。第一条“问题 → 规划 → 审批 → 执行 → 报告”闭环已经具备，但 RAG、Embedding、跨会话长期记忆、系统化评测、Web UI 和 MCP 仍按路线图分阶段实现。
 
 命令会向标准输出写入 JSON，其中包含：
 
@@ -212,6 +227,7 @@ uv run geopilot reject plan_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx --reason "需要先
 - `7`：模型鉴权、限流、超时、连接或 API 请求失败
 - `8`：模型返回格式或 Agent 循环异常
 - `9`：计划不存在、状态转换冲突或计划文件无效
+- `10`：计划编译、执行检查点或 GIS 工具执行失败
 
 PowerShell 可以通过 `$LASTEXITCODE` 查看退出码；Windows CMD 可以运行 `echo %ERRORLEVEL%`。
 
@@ -230,7 +246,7 @@ PowerShell 可以通过 `$LASTEXITCODE` 查看退出码；Windows CMD 可以运�
 src/geopilot/
 ├── agent/                 # Prompt、模型接口、工具注册表与 Agent Loop
 ├── cli.py                 # 命令行适配层
-├── execution/             # 已批准计划编译、执行状态与后续调度器
+├── execution/             # 已批准计划编译、工具调度、运行检查点与恢复
 ├── models.py              # Pydantic 数据契约
 ├── tools/                 # 可独立测试的确定性 GIS 工具
 └── workflows/             # 组合多个工具的业务流水线
@@ -257,8 +273,8 @@ uv run pytest -q
 - [x] 根据数据范围推荐米制投影 CRS，禁止 Agent 编造 EPSG
 - [x] 将自然语言问题转换为可校验的结构化分析计划
 - [x] 持久化计划检查点，并在执行前要求用户批准或拒绝
-- [ ] 执行米制投影、缓冲区和空间连接
-- [ ] 验证分析结果并输出 GeoJSON 与 Markdown 报告
+- [x] 执行米制投影、缓冲区和空间连接
+- [x] 验证分析结果并输出 GeoJSON 与 Markdown 报告
 - [ ] 提供可交互的 Web 界面
 
 ## v0.1 验收标准

@@ -18,6 +18,14 @@ from geopilot.agent import (
     build_model,
 )
 from geopilot.agent.tool_adapters import build_default_tool_registry
+from geopilot.execution import (
+    ApprovedPlanExecutor,
+    ExecutionStatus,
+    PlanCompilationError,
+    RunExecutionError,
+    RunStore,
+    RunStoreError,
+)
 from geopilot.planning.store import PlanStore, PlanStoreError
 from geopilot.tools.csv_point_loader import CsvPointLoadError
 from geopilot.workflows.dataset_intake import inspect_and_validate_dataset
@@ -30,6 +38,7 @@ EXIT_CONFIGURATION_ERROR = 6
 EXIT_MODEL_ERROR = 7
 EXIT_AGENT_ERROR = 8
 EXIT_PLAN_ERROR = 9
+EXIT_EXECUTION_ERROR = 10
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -124,6 +133,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Human-readable reason for rejecting the plan.",
     )
     _add_plans_directory_argument(reject_parser)
+
+    execute_parser = subparsers.add_parser(
+        "execute",
+        help="Execute a new run from an approved analysis plan.",
+    )
+    execute_parser.add_argument("plan_id", help="Approved plan identifier.")
+    _add_plans_directory_argument(execute_parser)
+    _add_runs_directory_argument(execute_parser)
+
+    show_run_parser = subparsers.add_parser(
+        "show-run",
+        help="Show a persisted execution checkpoint.",
+    )
+    show_run_parser.add_argument("run_id", help="Execution run identifier.")
+    _add_runs_directory_argument(show_run_parser)
+
+    resume_parser = subparsers.add_parser(
+        "resume",
+        help="Resume the first incomplete step of an execution run.",
+    )
+    resume_parser.add_argument("run_id", help="Execution run identifier.")
+    _add_plans_directory_argument(resume_parser)
+    _add_runs_directory_argument(resume_parser)
     return parser
 
 
@@ -134,6 +166,16 @@ def _add_plans_directory_argument(parser: argparse.ArgumentParser) -> None:
         type=Path,
         default=Path("artifacts") / "plans",
         help="Plan checkpoint directory (default: artifacts/plans).",
+    )
+
+
+def _add_runs_directory_argument(parser: argparse.ArgumentParser) -> None:
+    """Add the shared execution-checkpoint directory option."""
+    parser.add_argument(
+        "--runs-dir",
+        type=Path,
+        default=Path("artifacts") / "runs",
+        help="Execution checkpoint directory (default: artifacts/runs).",
     )
 
 
@@ -292,6 +334,53 @@ def _run_reject_plan(plan_id: str, reason: str, plans_dir: Path) -> int:
     return EXIT_SUCCESS
 
 
+def _run_execute_plan(plan_id: str, plans_dir: Path, runs_dir: Path) -> int:
+    """Execute an approved plan and print its durable run checkpoint."""
+    try:
+        run = ApprovedPlanExecutor(
+            PlanStore(plans_dir),
+            RunStore(runs_dir),
+        ).execute(plan_id)
+    except PlanStoreError as error:
+        _print_error(error.code.value, str(error))
+        return EXIT_PLAN_ERROR
+    except (PlanCompilationError, RunStoreError, RunExecutionError) as error:
+        _print_error(error.code.value, str(error))
+        return EXIT_EXECUTION_ERROR
+
+    print(run.model_dump_json(indent=2))
+    if run.status is ExecutionStatus.SUCCEEDED:
+        return EXIT_SUCCESS
+    return EXIT_EXECUTION_ERROR
+
+
+def _run_show_run(run_id: str, runs_dir: Path) -> int:
+    """Print one persisted execution checkpoint."""
+    try:
+        run = RunStore(runs_dir).load(run_id)
+    except RunStoreError as error:
+        _print_error(error.code.value, str(error))
+        return EXIT_EXECUTION_ERROR
+    print(run.model_dump_json(indent=2))
+    return EXIT_SUCCESS
+
+
+def _run_resume(run_id: str, plans_dir: Path, runs_dir: Path) -> int:
+    """Resume a failed or interrupted execution run."""
+    try:
+        run = ApprovedPlanExecutor(
+            PlanStore(plans_dir),
+            RunStore(runs_dir),
+        ).resume(run_id)
+    except (RunStoreError, RunExecutionError) as error:
+        _print_error(error.code.value, str(error))
+        return EXIT_EXECUTION_ERROR
+    print(run.model_dump_json(indent=2))
+    if run.status is ExecutionStatus.SUCCEEDED:
+        return EXIT_SUCCESS
+    return EXIT_EXECUTION_ERROR
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the GeoPilot command-line entry point."""
     parser = build_parser()
@@ -321,6 +410,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             arguments.plan_id,
             arguments.reason,
             arguments.plans_dir,
+        )
+    if arguments.command == "execute":
+        return _run_execute_plan(
+            arguments.plan_id,
+            arguments.plans_dir,
+            arguments.runs_dir,
+        )
+    if arguments.command == "show-run":
+        return _run_show_run(arguments.run_id, arguments.runs_dir)
+    if arguments.command == "resume":
+        return _run_resume(
+            arguments.run_id,
+            arguments.plans_dir,
+            arguments.runs_dir,
         )
 
     parser.print_help()

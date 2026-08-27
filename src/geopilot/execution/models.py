@@ -53,6 +53,7 @@ class ExecutionStepRecord(BaseModel):
     output: str
     status: ExecutionStatus = ExecutionStatus.PENDING
     artifact_path: str | None = None
+    result_path: str | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
     error_code: str | None = None
@@ -66,6 +67,7 @@ class ExecutionStepRecord(BaseModel):
                 value is not None
                 for value in (
                     self.artifact_path,
+                    self.result_path,
                     self.started_at,
                     self.finished_at,
                     self.error_code,
@@ -83,6 +85,7 @@ class ExecutionStepRecord(BaseModel):
                 self.started_at is None
                 or self.finished_at is None
                 or self.artifact_path is None
+                or self.result_path is None
                 or self.error_code is not None
                 or self.error_message is not None
             ):
@@ -104,6 +107,7 @@ class ExecutionRun(BaseModel):
 
     run_id: str = Field(pattern=r"^run_[A-Za-z0-9_-]+$")
     plan_id: str = Field(pattern=r"^plan_[A-Za-z0-9_-]+$")
+    working_directory: str = Field(min_length=1)
     status: ExecutionStatus = ExecutionStatus.PENDING
     created_at: datetime
     started_at: datetime | None = None
@@ -123,4 +127,26 @@ class ExecutionRun(BaseModel):
                 )
         elif self.started_at is None or self.finished_at is None:
             raise ValueError("A completed run requires both execution timestamps.")
+
+        statuses = [step.status for step in self.steps]
+        if self.status is ExecutionStatus.PENDING and any(
+            status is not ExecutionStatus.PENDING for status in statuses
+        ):
+            raise ValueError("A pending run requires every step to be pending.")
+        if self.status is ExecutionStatus.SUCCEEDED and any(
+            status is not ExecutionStatus.SUCCEEDED for status in statuses
+        ):
+            raise ValueError("A succeeded run requires every step to succeed.")
+        if self.status is ExecutionStatus.FAILED:
+            if ExecutionStatus.FAILED not in statuses:
+                raise ValueError("A failed run requires one failed step.")
+            if ExecutionStatus.RUNNING in statuses:
+                raise ValueError("A failed run cannot contain a running step.")
         return self
+
+
+class StepDispatchResult(BaseModel):
+    """Normalized metadata returned by one deterministic GIS tool call."""
+
+    output: str = Field(min_length=1)
+    metadata: dict[str, Any]

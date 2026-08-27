@@ -86,7 +86,7 @@ def compile_approved_plan(plan: AnalysisPlan) -> CompiledPlan:
             raise PlanCompilationError(
                 PlanCompilationErrorCode.LEGACY_PLAN_MISSING_OUTPUT,
                 "Plan step has no stable output artifact identifier; regenerate "
-                "the plan with prompt version 0.5.0 or later.",
+                "the plan with prompt version 0.6.0 or later.",
                 step_id=step.step_id,
             )
         if step.output in dataset_names:
