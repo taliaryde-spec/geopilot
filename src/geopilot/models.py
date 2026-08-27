@@ -171,3 +171,65 @@ class OverlayIntersectionResult(BaseModel):
     geometry_types: dict[str, int]
     crs: str
     how: str
+
+
+class CoverageMetricsResult(BaseModel):
+    """Metadata for per-target coverage metrics."""
+
+    source: str
+    output: str
+    feature_count: int = Field(ge=0)
+    geometry_types: dict[str, int]
+    crs: str
+    key_field: str
+    intersection_area_field: str
+    total_area_field: str
+    coverage_ratio_field: str
+    population_field: str
+    estimated_covered_population_field: str
+    population_method: str
+    total_covered_area_m2: float = Field(ge=0)
+
+
+class RestoreUncoveredResult(BaseModel):
+    """Metadata for restoring target polygons omitted by an intersection."""
+
+    target_source: str
+    metrics_source: str
+    output: str
+    feature_count: int = Field(ge=0)
+    restored_feature_count: int = Field(ge=0)
+    geometry_types: dict[str, int]
+    crs: str
+    key_field: str
+    fill_defaults: dict[str, float]
+
+
+class SpatialJoinCountResult(BaseModel):
+    """Metadata for per-target spatial relationship counts."""
+
+    left_source: str
+    right_source: str
+    output: str
+    feature_count: int = Field(ge=0)
+    relationship_count: int = Field(ge=0)
+    geometry_types: dict[str, int]
+    crs: str
+    key_field: str
+    output_field: str
+    predicate: str
+
+
+class AttributeJoinResult(BaseModel):
+    """Metadata for a left attribute join that preserves target geometry."""
+
+    left_source: str
+    right_source: str
+    output: str
+    feature_count: int = Field(ge=0)
+    matched_feature_count: int = Field(ge=0)
+    unmatched_feature_count: int = Field(ge=0)
+    geometry_types: dict[str, int]
+    crs: str
+    left_key: str
+    right_key: str

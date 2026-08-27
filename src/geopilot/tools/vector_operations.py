@@ -65,6 +65,7 @@ def _load_valid_dataset(
     *,
     longitude_column: str = "longitude",
     latitude_column: str = "latitude",
+    allow_empty: bool = False,
 ) -> tuple[Path, gpd.GeoDataFrame]:
     """Load data and reject conditions that make transformations unsafe."""
     source_path = Path(source).resolve()
@@ -73,7 +74,7 @@ def _load_valid_dataset(
         longitude_column=longitude_column,
         latitude_column=latitude_column,
     )
-    if frame.empty:
+    if frame.empty and not allow_empty:
         raise VectorOperationError(
             VectorOperationErrorCode.EMPTY_DATASET,
             f"Dataset contains no features: {source_path}",

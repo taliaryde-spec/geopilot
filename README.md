@@ -159,7 +159,16 @@ uv run geopilot reject plan_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx --reason "需要先
 
 中间产物统一写为 GeoPackage（`.gpkg`），以保留 CRS、几何和字段类型。工具默认拒绝覆盖已有文件，并通过临时文件完成后再原子替换，降低中途失败留下残缺结果的风险。它们不会注册到普通对话 Agent，而是由后续的 `ApprovedPlanExecutor` 在确认计划状态为 `approved` 后调用。
 
-这些工具已经覆盖当前计划的“重投影 → 求交前面积 → 字段缓冲 → 去重合并 → 社区求交”链路。求交工具允许合法的空结果，因为零覆盖社区会在后续 `restore_uncovered_features` 阶段恢复并填入 0。覆盖指标计算、社区恢复和数据连接将在同一执行层继续实现。
+这些工具已经覆盖当前计划的“重投影 → 求交前面积 → 字段缓冲 → 去重合并 → 社区求交”链路。求交工具允许合法的空结果，因为零覆盖社区会由 `restore_uncovered_features` 恢复并填入 0。覆盖指标计算、社区恢复和数据连接由下述业务工具完成。
+
+覆盖业务工具位于 `src/geopilot/tools/coverage_analysis.py`：
+
+- `calculate_coverage_metrics`：按社区合并交集片段，计算覆盖面积、覆盖率和基于均匀人口密度假设的覆盖人口
+- `restore_uncovered_features`：将指标左连接回完整社区图层，仅为被求交遗漏的社区补 0
+- `count_spatial_relationships`：通过左空间连接统计社区内设施数量，同时保留 0 设施社区
+- `join_coverage_attributes`：只把右侧新增字段合并到覆盖结果，保留左侧标准人口和社区字段名
+
+至此，确定性工具已覆盖批准计划的第 1～10 步。结果验证、EPSG:4326 GeoJSON 导出和 Markdown 报告将在下一批工具中实现；所有写文件工具仍只能由后续审批执行器调用。
 
 命令会向标准输出写入 JSON，其中包含：
 
