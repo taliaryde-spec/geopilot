@@ -3,7 +3,11 @@
 from collections.abc import Sequence
 from pathlib import Path
 
-from geopilot.rag.chunker import chunk_knowledge_documents
+from geopilot.rag.chunker import (
+    DEFAULT_CHUNK_OVERLAP,
+    DEFAULT_CHUNK_SIZE,
+    chunk_knowledge_documents,
+)
 from geopilot.rag.embeddings import (
     DEFAULT_EMBEDDING_MODEL,
     EmbeddingProvider,
@@ -33,8 +37,8 @@ def build_knowledge_index(
     index_path: str | Path = DEFAULT_KNOWLEDGE_INDEX,
     model_name: str = DEFAULT_EMBEDDING_MODEL,
     cache_directory: str | Path = DEFAULT_MODEL_CACHE,
-    chunk_size: int = 700,
-    chunk_overlap: int = 100,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
     embedding_provider: EmbeddingProvider | None = None,
     working_directory: str | Path | None = None,
 ) -> KnowledgeBuildResult:

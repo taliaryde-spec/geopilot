@@ -1,6 +1,10 @@
 """Local retrieval-augmented generation components for GeoPilot."""
 
-from geopilot.rag.chunker import chunk_knowledge_documents
+from geopilot.rag.chunker import (
+    DEFAULT_CHUNK_OVERLAP,
+    DEFAULT_CHUNK_SIZE,
+    chunk_knowledge_documents,
+)
 from geopilot.rag.embeddings import (
     DEFAULT_EMBEDDING_MODEL,
     EmbeddingError,
@@ -9,6 +13,10 @@ from geopilot.rag.embeddings import (
     FastEmbedProvider,
 )
 from geopilot.rag.evaluation import evaluate_retrieval, load_evaluation_cases
+from geopilot.rag.experiment import (
+    DEFAULT_CHUNKING_VARIANTS,
+    run_chunking_experiment,
+)
 from geopilot.rag.loader import (
     KnowledgeLoadError,
     KnowledgeLoadErrorCode,
@@ -16,12 +24,16 @@ from geopilot.rag.loader import (
     load_knowledge_documents,
 )
 from geopilot.rag.models import (
+    ChunkingExperimentResult,
+    ChunkingExperimentRun,
+    ChunkingExperimentVariant,
     IndexedKnowledgeChunk,
     KnowledgeBuildResult,
     KnowledgeChunk,
     KnowledgeDocument,
     KnowledgeSearchHit,
     KnowledgeSearchResult,
+    RelevantKnowledgeTarget,
     RetrievalCaseResult,
     RetrievalEvaluationCase,
     RetrievalEvaluationResult,
@@ -42,9 +54,15 @@ from geopilot.rag.vector_store import (
 )
 
 __all__ = [
+    "DEFAULT_CHUNKING_VARIANTS",
+    "DEFAULT_CHUNK_OVERLAP",
+    "DEFAULT_CHUNK_SIZE",
     "DEFAULT_EMBEDDING_MODEL",
     "DEFAULT_KNOWLEDGE_INDEX",
     "DEFAULT_MODEL_CACHE",
+    "ChunkingExperimentResult",
+    "ChunkingExperimentRun",
+    "ChunkingExperimentVariant",
     "EmbeddingError",
     "EmbeddingErrorCode",
     "EmbeddingProvider",
@@ -59,6 +77,7 @@ __all__ = [
     "KnowledgeSearchHit",
     "KnowledgeSearchResult",
     "LocalVectorStore",
+    "RelevantKnowledgeTarget",
     "RetrievalCaseResult",
     "RetrievalEvaluationCase",
     "RetrievalEvaluationResult",
@@ -73,4 +92,5 @@ __all__ = [
     "load_knowledge_document",
     "load_knowledge_documents",
     "open_knowledge_retriever",
+    "run_chunking_experiment",
 ]

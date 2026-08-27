@@ -211,7 +211,7 @@ uv run geopilot show-run <run_id>
 uv run geopilot resume <run_id>
 ```
 
-完整 Agent 组件与当前完成边界见 `docs/AGENT_COMPONENTS.md`。第一条“问题 → 规划 → 审批 → 执行 → 报告”闭环和本地 RAG 已经具备；跨会话长期记忆、完整 Agent 评测、Web UI 和 MCP 仍按路线图分阶段实现。
+完整 Agent 组件、实际方法和迭代证据见 [Agent 组件与工程实现记录](docs/AGENT_COMPONENTS.md)，对应的面试追问与项目化回答见 [Agent 面试问题与项目化回答](docs/AGENT_INTERVIEW_QA.md)。以后每次 Agent 相关推进都会同步追加这两份主文档。第一条“问题 → 规划 → 审批 → 执行 → 报告”闭环和本地 RAG 已经具备；跨会话长期记忆、完整 Agent 评测、Web UI 和 MCP 仍按路线图分阶段实现。
 
 ## 本地 RAG 与 Embedding
 
@@ -223,7 +223,7 @@ GeoPilot 使用 RAG 检索 GIS 分析规则、项目数据字典和字段定义�
 uv run geopilot rag-build knowledge
 ```
 
-默认 Embedding 模型是 `BAAI/bge-small-zh-v1.5`。首次执行会下载模型到被 Git 忽略的 `artifacts/models/fastembed/`，并把可移植 JSON 向量索引写入 `artifacts/rag/index.json`。当前知识库包含 2 份文档、12 个标题感知片段和 512 维向量。
+默认 Embedding 模型是 `BAAI/bge-small-zh-v1.5`。首次执行会下载模型到被 Git 忽略的 `artifacts/models/fastembed/`，并把可移植 JSON 向量索引写入 `artifacts/rag/index.json`。当前知识库包含 3 份文档、19 个标题感知片段和 512 维向量。默认 Chunk 参数为实验选出的 `500/80`，分别表示最大字符数与重叠字符数。
 
 直接检查检索结果和引用：
 
@@ -237,7 +237,15 @@ uv run geopilot rag-search "为什么不能在 EPSG:4326 中直接做米制缓�
 uv run geopilot rag-evaluate knowledge/retrieval_cases.json --top-k 3
 ```
 
-当前 6 条 GIS 检索样例的真实结果为 `Hit Rate@3 = 1.00`、`MRR = 0.9167`。评估要求来源文件和目标章节同时匹配，不只检查是否命中了同一份文档。
+当前 10 条 GIS 黄金样例的真实 Top-3 结果为：`Hit Rate = 1.00`、`Precision = 0.3333`、`Recall = 1.00`、`MRR = 0.90`、`NDCG = 0.9262`。标签同时指定来源、章节、正文子串和相关度等级，不只检查是否命中了同一份文档。6 条样例的历史基线见 [RAG Baseline V1](docs/evaluations/RAG_BASELINE_V1.md)，参数选择过程见 [Chunking Experiment V1](docs/evaluations/RAG_CHUNK_EXPERIMENT_V1.md)。
+
+复现 Chunking 控制变量实验：
+
+```powershell
+uv run geopilot rag-chunk-experiment knowledge --cases knowledge/retrieval_cases.json --top-k 3
+```
+
+后续大模型学习和面试准备以 [GeoPilot 大模型学习与面试主线](docs/LLM_LEARNING_PATH.md) 为统一入口；每个阶段必须同时交付原理、代码、测试、真实实验、技术取舍、面试回答和诚实的简历描述。
 
 索引存在时，普通 `agent` 命令会自动注册 `search_knowledge` 工具。模型可在解释 GIS 方法或项目字段前检索知识库，并收到 `source#标题层级 [chunk:n]` 形式的稳定引用；索引不存在时，Agent 仍可使用原有数据检查、CRS 推荐和计划工具。
 

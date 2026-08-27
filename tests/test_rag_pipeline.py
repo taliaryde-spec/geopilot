@@ -1,14 +1,20 @@
 """Tests for GeoPilot's citation-aware local RAG pipeline."""
 
 import json
+from math import log2
 from pathlib import Path
 
 import pytest
 
 from geopilot.rag.chunker import chunk_knowledge_documents
 from geopilot.rag.evaluation import evaluate_retrieval, load_evaluation_cases
+from geopilot.rag.experiment import run_chunking_experiment
 from geopilot.rag.loader import load_knowledge_document, load_knowledge_documents
-from geopilot.rag.models import RetrievalEvaluationCase
+from geopilot.rag.models import (
+    ChunkingExperimentVariant,
+    RelevantKnowledgeTarget,
+    RetrievalEvaluationCase,
+)
 from geopilot.rag.service import (
     KnowledgeRetriever,
     build_knowledge_index,
@@ -140,7 +146,7 @@ def test_search_rejects_embedding_model_mismatch(tmp_path: Path) -> None:
     assert captured.value.code is VectorStoreErrorCode.MODEL_MISMATCH
 
 
-def test_retrieval_evaluation_calculates_hit_rate_and_mrr(tmp_path: Path) -> None:
+def test_retrieval_evaluation_calculates_ranking_metrics(tmp_path: Path) -> None:
     _write_knowledge_files(tmp_path)
     index_path = tmp_path / "index.json"
     provider = KeywordEmbeddingProvider()
@@ -155,14 +161,26 @@ def test_retrieval_evaluation_calculates_hit_rate_and_mrr(tmp_path: Path) -> Non
         RetrievalEvaluationCase(
             case_id="metric_crs",
             query="米制缓冲为什么需要投影？",
-            expected_source="crs.md",
-            expected_section="距离分析",
+            relevant_targets=[
+                RelevantKnowledgeTarget(
+                    source="crs.md",
+                    section="距离分析",
+                    text_contains="EPSG:4326",
+                    relevance=3,
+                )
+            ],
         ),
         RetrievalEvaluationCase(
             case_id="capacity_field",
             query="capacity 字段是什么？",
-            expected_source="dictionary.md",
-            expected_section="capacity 字段",
+            relevant_targets=[
+                RelevantKnowledgeTarget(
+                    source="dictionary.md",
+                    section="capacity 字段",
+                    text_contains="capacity",
+                    relevance=3,
+                )
+            ],
         ),
     ]
 
@@ -170,20 +188,192 @@ def test_retrieval_evaluation_calculates_hit_rate_and_mrr(tmp_path: Path) -> Non
 
     assert result.case_count == 2
     assert result.hit_rate_at_k == 1.0
+    assert result.mean_precision_at_k == 1.0
+    assert result.mean_recall_at_k == 1.0
     assert result.mean_reciprocal_rank == 1.0
+    assert result.mean_ndcg_at_k == 1.0
     assert all(case.first_relevant_rank == 1 for case in result.cases)
+
+
+def test_retrieval_evaluation_discounts_a_rank_two_result(tmp_path: Path) -> None:
+    _write_knowledge_files(tmp_path)
+    index_path = tmp_path / "index.json"
+    provider = KeywordEmbeddingProvider()
+    build_knowledge_index(
+        [tmp_path],
+        index_path=index_path,
+        embedding_provider=provider,
+        working_directory=tmp_path,
+    )
+    retriever = KnowledgeRetriever(LocalVectorStore(index_path, provider))
+    query = "没有关键词的查询"
+    expected_hit = retriever.search(query, top_k=2).hits[1]
+    cases = [
+        RetrievalEvaluationCase(
+            case_id="rank_two",
+            query=query,
+            relevant_targets=[
+                RelevantKnowledgeTarget(
+                    source=expected_hit.source,
+                    section=expected_hit.section,
+                    text_contains=expected_hit.text,
+                    relevance=3,
+                )
+            ],
+        )
+    ]
+
+    result = evaluate_retrieval(retriever, cases, top_k=2)
+    case = result.cases[0]
+
+    assert case.first_relevant_rank == 2
+    assert case.precision_at_k == 0.5
+    assert case.recall_at_k == 1.0
+    assert case.reciprocal_rank == 0.5
+    assert case.ndcg_at_k == pytest.approx(1 / log2(3))
+
+
+def test_retrieval_evaluation_uses_graded_relevance_for_ndcg(tmp_path: Path) -> None:
+    _write_knowledge_files(tmp_path)
+    index_path = tmp_path / "index.json"
+    provider = KeywordEmbeddingProvider()
+    build_knowledge_index(
+        [tmp_path],
+        index_path=index_path,
+        embedding_provider=provider,
+        working_directory=tmp_path,
+    )
+    retriever = KnowledgeRetriever(LocalVectorStore(index_path, provider))
+    query = "没有关键词的查询"
+    ranked_hits = retriever.search(query, top_k=2).hits
+    cases = [
+        RetrievalEvaluationCase(
+            case_id="graded_relevance",
+            query=query,
+            relevant_targets=[
+                RelevantKnowledgeTarget(
+                    source=ranked_hits[0].source,
+                    section=ranked_hits[0].section,
+                    text_contains=ranked_hits[0].text,
+                    relevance=1,
+                ),
+                RelevantKnowledgeTarget(
+                    source=ranked_hits[1].source,
+                    section=ranked_hits[1].section,
+                    text_contains=ranked_hits[1].text,
+                    relevance=3,
+                ),
+            ],
+        )
+    ]
+
+    result = evaluate_retrieval(retriever, cases, top_k=2)
+
+    actual_dcg = 1 + (7 / log2(3))
+    ideal_dcg = 7 + (1 / log2(3))
+    assert result.cases[0].ndcg_at_k == pytest.approx(actual_dcg / ideal_dcg)
+    assert result.cases[0].precision_at_k == 1.0
+    assert result.cases[0].recall_at_k == 1.0
 
 
 def test_load_evaluation_cases_validates_json(tmp_path: Path) -> None:
     cases_path = tmp_path / "cases.json"
     cases_path.write_text(
-        '[{"case_id":"crs","query":"如何投影？","expected_source":"crs.md",'
-        '"expected_section":"距离分析"}]',
+        json.dumps(
+            [
+                {
+                    "case_id": "crs",
+                    "query": "如何投影？",
+                    "relevant_targets": [
+                        {
+                            "source": "crs.md",
+                            "section": "距离分析",
+                            "text_contains": "EPSG:4326",
+                            "relevance": 3,
+                        }
+                    ],
+                }
+            ],
+            ensure_ascii=False,
+        ),
         encoding="utf-8",
     )
 
     cases = load_evaluation_cases(cases_path)
 
     assert cases[0].case_id == "crs"
-    assert cases[0].expected_source == "crs.md"
-    assert cases[0].expected_section == "距离分析"
+    assert cases[0].relevant_targets[0].source == "crs.md"
+    assert cases[0].relevant_targets[0].section == "距离分析"
+
+
+def test_chunking_experiment_compares_variants_under_shared_settings(
+    tmp_path: Path,
+) -> None:
+    knowledge_path = tmp_path / "long_guideline.md"
+    knowledge_path.write_text(
+        "# 长文档\n\n## 投影规则\n\n" + ("距离分析必须使用米制 CRS。" * 60),
+        encoding="utf-8",
+    )
+    cases = [
+        RetrievalEvaluationCase(
+            case_id="metric_crs",
+            query="距离分析使用什么坐标系？",
+            relevant_targets=[
+                RelevantKnowledgeTarget(
+                    source="long_guideline.md",
+                    section="投影规则",
+                    relevance=3,
+                )
+            ],
+        )
+    ]
+    variants = [
+        ChunkingExperimentVariant(chunk_size=120, chunk_overlap=20),
+        ChunkingExperimentVariant(chunk_size=300, chunk_overlap=50),
+    ]
+
+    result = run_chunking_experiment(
+        [knowledge_path],
+        cases,
+        variants=variants,
+        output_directory=tmp_path / "experiment",
+        embedding_provider=KeywordEmbeddingProvider(),
+        working_directory=tmp_path,
+        top_k=1,
+    )
+
+    assert result.model_name == "test-keywords-v1"
+    assert result.case_count == 1
+    assert len(result.runs) == 2
+    assert result.runs[0].chunk_count > result.runs[1].chunk_count
+    assert result.runs[0].max_chunk_characters <= 120
+    assert result.runs[1].max_chunk_characters <= 300
+    assert all(run.evaluation.mean_recall_at_k == 1.0 for run in result.runs)
+    assert all(Path(run.index_path).is_file() for run in result.runs)
+
+
+def test_chunking_experiment_rejects_duplicate_variants(tmp_path: Path) -> None:
+    knowledge_path = tmp_path / "knowledge.md"
+    knowledge_path.write_text("# 知识\n\n有效正文", encoding="utf-8")
+    variant = ChunkingExperimentVariant(chunk_size=300, chunk_overlap=50)
+
+    with pytest.raises(ValueError, match="must be unique"):
+        run_chunking_experiment(
+            [knowledge_path],
+            [
+                RetrievalEvaluationCase(
+                    case_id="knowledge",
+                    query="正文是什么？",
+                    relevant_targets=[
+                        RelevantKnowledgeTarget(
+                            source="knowledge.md",
+                            section="知识",
+                        )
+                    ],
+                )
+            ],
+            variants=[variant, variant],
+            output_directory=tmp_path / "experiment",
+            embedding_provider=KeywordEmbeddingProvider(),
+            working_directory=tmp_path,
+        )

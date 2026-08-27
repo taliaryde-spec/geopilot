@@ -6,6 +6,9 @@ from hashlib import sha256
 
 from geopilot.rag.models import KnowledgeChunk, KnowledgeDocument
 
+DEFAULT_CHUNK_SIZE = 500
+DEFAULT_CHUNK_OVERLAP = 80
+
 
 @dataclass(frozen=True, slots=True)
 class _Section:
@@ -78,8 +81,8 @@ def _split_section(text: str, *, chunk_size: int, overlap: int) -> list[str]:
 def chunk_knowledge_documents(
     documents: list[KnowledgeDocument],
     *,
-    chunk_size: int = 700,
-    chunk_overlap: int = 100,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
 ) -> list[KnowledgeChunk]:
     """Split documents by headings and bounded character windows."""
     if not documents:

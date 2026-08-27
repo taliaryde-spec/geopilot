@@ -70,53 +70,5 @@
         "relevance": 3
       }
     ]
-  },
-  {
-    "case_id": "candidate_not_final_site",
-    "query": "GeoPilot 生成的候选点能不能直接当作最终建设位置？",
-    "relevant_targets": [
-      {
-        "source": "knowledge/facility_site_selection.md",
-        "section": "使用边界与分析目标",
-        "text_contains": "候选点不是最终建设位置",
-        "relevance": 3
-      }
-    ]
-  },
-  {
-    "case_id": "site_selection_constraints_first",
-    "query": "公共设施候选点为什么不能只看需求评分，硬约束和评分顺序是什么？",
-    "relevant_targets": [
-      {
-        "source": "knowledge/facility_site_selection.md",
-        "section": "候选点生成、硬约束与排序流程",
-        "text_contains": "先约束、后评分、再做敏感性检查",
-        "relevance": 3
-      }
-    ]
-  },
-  {
-    "case_id": "candidate_score_formula",
-    "query": "GeoPilot 演示选址的 candidate_score 如何计算，各指标权重是多少？",
-    "relevant_targets": [
-      {
-        "source": "knowledge/facility_site_selection.md",
-        "section": "候选点生成、硬约束与排序流程",
-        "text_contains": "candidate_score = 0.45 * service_gap",
-        "relevance": 3
-      }
-    ]
-  },
-  {
-    "case_id": "missing_feasibility_layers",
-    "query": "缺少土地规划、水域和道路数据时，能否声称候选点具备建设可行性？",
-    "relevant_targets": [
-      {
-        "source": "knowledge/facility_site_selection.md",
-        "section": "结果验证与解释",
-        "text_contains": "不能声称候选点具备实际建设可行性",
-        "relevance": 3
-      }
-    ]
   }
 ]

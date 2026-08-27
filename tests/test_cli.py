@@ -21,6 +21,7 @@ from geopilot.cli import (
     EXIT_RAG_ERROR,
     EXIT_SUCCESS,
     EXIT_VALIDATION_ERROR,
+    build_parser,
     main,
 )
 from geopilot.planning.models import (
@@ -70,6 +71,26 @@ def test_main_without_command_prints_help(
     assert "rag-build" in captured.out
     assert "rag-search" in captured.out
     assert "rag-evaluate" in captured.out
+    assert "rag-chunk-experiment" in captured.out
+
+
+def test_chunk_experiment_parser_validates_repeatable_variants() -> None:
+    arguments = build_parser().parse_args(
+        [
+            "rag-chunk-experiment",
+            "knowledge",
+            "--variant",
+            "300:50",
+            "--variant",
+            "700:100",
+        ]
+    )
+
+    assert arguments.command == "rag-chunk-experiment"
+    assert [variant.model_dump() for variant in arguments.variants] == [
+        {"chunk_size": 300, "chunk_overlap": 50},
+        {"chunk_size": 700, "chunk_overlap": 100},
+    ]
 
 
 def test_rag_search_reports_missing_index(

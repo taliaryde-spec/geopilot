@@ -28,9 +28,13 @@ from geopilot.execution import (
 )
 from geopilot.planning.store import PlanStore, PlanStoreError
 from geopilot.rag import (
+    DEFAULT_CHUNK_OVERLAP,
+    DEFAULT_CHUNK_SIZE,
+    DEFAULT_CHUNKING_VARIANTS,
     DEFAULT_EMBEDDING_MODEL,
     DEFAULT_KNOWLEDGE_INDEX,
     DEFAULT_MODEL_CACHE,
+    ChunkingExperimentVariant,
     EmbeddingError,
     KnowledgeLoadError,
     VectorStoreError,
@@ -38,6 +42,7 @@ from geopilot.rag import (
     evaluate_retrieval,
     load_evaluation_cases,
     open_knowledge_retriever,
+    run_chunking_experiment,
 )
 from geopilot.tools.csv_point_loader import CsvPointLoadError
 from geopilot.workflows.dataset_intake import inspect_and_validate_dataset
@@ -193,8 +198,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Markdown/text files or directories to index.",
     )
     _add_rag_index_arguments(rag_build_parser, include_model=True)
-    rag_build_parser.add_argument("--chunk-size", type=int, default=700)
-    rag_build_parser.add_argument("--chunk-overlap", type=int, default=100)
+    rag_build_parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=DEFAULT_CHUNK_SIZE,
+    )
+    rag_build_parser.add_argument(
+        "--chunk-overlap",
+        type=int,
+        default=DEFAULT_CHUNK_OVERLAP,
+    )
 
     rag_search_parser = subparsers.add_parser(
         "rag-search",
@@ -206,7 +219,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     rag_evaluate_parser = subparsers.add_parser(
         "rag-evaluate",
-        help="Evaluate retrieval hit rate and reciprocal rank.",
+        help="Evaluate retrieval coverage, precision, and ranking quality.",
     )
     rag_evaluate_parser.add_argument(
         "cases",
@@ -215,7 +228,63 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_rag_index_arguments(rag_evaluate_parser, include_model=False)
     rag_evaluate_parser.add_argument("--top-k", type=int, default=4)
+
+    chunk_experiment_parser = subparsers.add_parser(
+        "rag-chunk-experiment",
+        help="Compare chunk size and overlap variants under fixed RAG settings.",
+    )
+    chunk_experiment_parser.add_argument(
+        "sources",
+        nargs="+",
+        type=Path,
+        help="Markdown/text files or directories shared by every variant.",
+    )
+    chunk_experiment_parser.add_argument(
+        "--cases",
+        type=Path,
+        default=Path("knowledge") / "retrieval_cases.json",
+        help="Shared JSON retrieval gold set.",
+    )
+    chunk_experiment_parser.add_argument(
+        "--variant",
+        action="append",
+        dest="variants",
+        type=_parse_chunking_variant,
+        help="Repeatable SIZE:OVERLAP pair; defaults to four built-in variants.",
+    )
+    chunk_experiment_parser.add_argument(
+        "--output-directory",
+        type=Path,
+        default=Path("artifacts") / "rag" / "chunk_experiments",
+        help="Directory for per-variant vector indices.",
+    )
+    chunk_experiment_parser.add_argument(
+        "--model-cache",
+        type=Path,
+        default=DEFAULT_MODEL_CACHE,
+        help="Local FastEmbed model cache directory.",
+    )
+    chunk_experiment_parser.add_argument(
+        "--embedding-model",
+        default=DEFAULT_EMBEDDING_MODEL,
+        help=f"Embedding model shared by variants (default: {DEFAULT_EMBEDDING_MODEL}).",
+    )
+    chunk_experiment_parser.add_argument("--top-k", type=int, default=3)
     return parser
+
+
+def _parse_chunking_variant(value: str) -> ChunkingExperimentVariant:
+    """Parse a CLI SIZE:OVERLAP pair into a validated experiment variant."""
+    parts = value.split(":")
+    if len(parts) != 2:
+        raise argparse.ArgumentTypeError("variant must use SIZE:OVERLAP format")
+    try:
+        return ChunkingExperimentVariant(
+            chunk_size=int(parts[0]),
+            chunk_overlap=int(parts[1]),
+        )
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
 
 
 def _add_plans_directory_argument(parser: argparse.ArgumentParser) -> None:
@@ -576,6 +645,42 @@ def _run_rag_evaluate(
     return EXIT_SUCCESS
 
 
+def _run_rag_chunk_experiment(
+    sources: list[Path],
+    *,
+    cases_path: Path,
+    variants: list[ChunkingExperimentVariant] | None,
+    output_directory: Path,
+    model_cache: Path,
+    embedding_model: str,
+    top_k: int,
+) -> int:
+    """Compare chunking variants and print all build and retrieval metrics."""
+    try:
+        result = run_chunking_experiment(
+            sources,
+            load_evaluation_cases(cases_path),
+            variants=variants or DEFAULT_CHUNKING_VARIANTS,
+            output_directory=output_directory,
+            model_name=embedding_model,
+            cache_directory=model_cache,
+            top_k=top_k,
+            working_directory=Path.cwd(),
+        )
+    except (
+        KnowledgeLoadError,
+        EmbeddingError,
+        VectorStoreError,
+        OSError,
+        RuntimeError,
+        ValueError,
+    ) as error:
+        _print_error(_rag_error_code(error), str(error))
+        return EXIT_RAG_ERROR
+    print(result.model_dump_json(indent=2))
+    return EXIT_SUCCESS
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the GeoPilot command-line entry point."""
     parser = build_parser()
@@ -643,6 +748,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             arguments.cases,
             index_path=arguments.index_path,
             model_cache=arguments.model_cache,
+            top_k=arguments.top_k,
+        )
+    if arguments.command == "rag-chunk-experiment":
+        return _run_rag_chunk_experiment(
+            arguments.sources,
+            cases_path=arguments.cases,
+            variants=arguments.variants,
+            output_directory=arguments.output_directory,
+            model_cache=arguments.model_cache,
+            embedding_model=arguments.embedding_model,
             top_k=arguments.top_k,
         )
 

@@ -1,4 +1,10 @@
-# GeoPilot Agent 组件地图
+# GeoPilot Agent 组件与工程实现记录
+
+## 文档职责与维护规则
+
+这是第一份持续追加的 Agent 主文档，记录 GeoPilot **实际采用的方法**。每次 Agent 相关代码、参数、实验指标或架构边界发生有意义的变化，都必须在文末“迭代记录”追加日期、变更、证据、取舍和下一步，并同步更新 [Agent 面试问题与项目化回答](AGENT_INTERVIEW_QA.md)。
+
+本文件只记录已经由源码、测试或真实运行证明的事实；规划中的功能必须明确标记为“未实现”，不能因为出现在路线图里就写成已完成。
 
 这份文档区分“已经形成第一条可运行闭环”和“完整大模型应用的全部组件”。第一条闭环是：自然语言问题 → LLM 规划与工具调用 → 人工审批 → 确定性 GIS 执行 → 验证 → 地图数据与报告。RAG 与 Embedding 已作为第二条知识链路接入；跨会话长期记忆、系统化 Agent 评测、Web UI 和 MCP 仍是后续独立阶段。
 
@@ -51,8 +57,44 @@ GeoPackage / GeoJSON / Markdown
 | Embedding | 已完成第一版 | `src/geopilot/rag/embeddings.py` | 使用本地 FastEmbed 区分 passage/query 角色生成中文向量 |
 | Vector Store | 已完成第一版 | `src/geopilot/rag/vector_store.py` | JSON 持久化、模型/维度校验和精确余弦相似度检索 |
 | RAG 服务与工具 | 已完成第一版 | `src/geopilot/rag/service.py`、`agent/tool_adapters.py` | 返回带来源引用的证据，并按索引存在性注册 Agent 工具 |
-| 检索评估 | 已完成第一版 | `src/geopilot/rag/evaluation.py`、`knowledge/retrieval_cases.json` | 按来源与章节计算 Hit Rate@K 和 MRR |
+| 检索评估 | 已完成第一版 | `src/geopilot/rag/evaluation.py`、`knowledge/retrieval_cases.json` | 按来源、章节、正文标签与相关度等级计算 Precision、Recall、MRR 和 NDCG |
 | 用户入口 | CLI 已完成 | `src/geopilot/cli.py` | 原有 Agent/执行命令及 rag-build、rag-search、rag-evaluate |
+
+## 当前采用的方法与技术取舍
+
+### 1. Agent 与 Workflow 的组合
+
+GeoPilot 没有让 LLM 直接执行任意 Python 或任意 GIS 操作。LLM 负责理解自然语言、选择受限工具和生成结构化计划；计划一旦获批，就交给确定性 Workflow 顺序执行。这样保留 Agent 的灵活理解能力，同时让 CRS、缓冲、求交、统计与导出保持可测试和可复现。
+
+### 2. 模型适配与配置隔离
+
+`agent/client.py` 定义统一模型接口，`chat_completions.py` 适配 DeepSeek/OpenRouter，`openai_responses.py` 适配 OpenAI，`factory.py` 根据配置选择实现。API Key 只从环境变量读取，`.env` 被 Git 忽略。模型供应商变化不会改变 Agent Loop、工具契约或 GIS 业务逻辑。
+
+### 3. 版本化 Prompt 与代码护栏
+
+System Prompt 位于 `agent/prompts.py` 并有显式版本。Prompt 负责告诉模型何时检查数据、何时推荐 CRS、何时检索知识和何时提交计划；关键安全规则还会在 Pydantic Schema、计划语义校验器和执行编译器中再次验证。原因是 Prompt 属于软约束，不能替代代码级权限与数据校验。
+
+### 4. Function Calling 与 Tool Registry
+
+工具通过 `AgentTool` 注册名称、说明、输入 Pydantic 模型、处理函数和可恢复错误。Agent Loop 把 JSON Schema 发给模型；模型返回 Tool Call 后，Registry 再校验参数并调用本地函数。工具结果以结构化消息返回模型，模型不能绕过 Registry 直接访问 GIS 函数。
+
+### 5. 结构化规划与人工审批
+
+空间分析计划包含原始数据集、顺序步骤、操作、参数、风险、假设和稳定 output 标识。`PlanStore` 使用 `awaiting_approval → approved/rejected` 状态机保存人工决策。提交计划不等于批准，批准也不自动篡改步骤；执行器只接受已批准且能通过编译的计划。
+
+### 6. 确定性 GIS 执行与恢复
+
+Compiler 验证产物依赖、输出唯一性和操作参数，Dispatcher 将每个 operation 映射到明确的 GeoPandas 工具，Executor 顺序执行并失败即停。RunStore 保存步骤状态和产物元数据；恢复时只跳过产物仍存在的成功步骤。文件工具采用临时文件后原子替换，降低中断留下残缺产物的风险。
+
+### 7. Agentic RAG
+
+知识库存在时才注册 `search_knowledge`。离线侧加载 Markdown/TXT，采用 Markdown 标题结构感知切分，超长章节再按自然分隔符递归字符切分；默认最大 500 字符、重叠 80 字符，该参数来自四组控制变量实验。`BAAI/bge-small-zh-v1.5` 分别通过 passage/query 接口生成 512 维向量，向量 L2 归一化后写入 JSON 索引。在线侧使用同一模型生成 Query 向量，精确计算余弦相似度并返回正文、分数和稳定引用。
+
+当前仅有 19 个 Chunk，选择 JSON + NumPy 是为了透明和便于测试；它不是面向百万向量、并发与增量索引的生产向量数据库。RAG 用于项目规则和字段知识，不代替数据检查或 GIS 数值计算。
+
+### 8. 检索评估
+
+黄金样例为每个 Query 标注一个或多个相关目标：来源、章节、正文子串和 1～3 级相关度。评估器计算 Hit Rate@K、Precision@K、Recall@K、MRR 和 NDCG@K。Baseline 固定知识库、Embedding、Chunk 参数和 Top-K，为后续控制变量实验提供比较基准。
 
 ## Memory 现在有什么
 
@@ -75,13 +117,13 @@ Chunking
 Embedding
     ↓
 Vector Store
-    ↓ 相似度检索 + 元数据过滤
+    ↓ 相似度排序
 带来源与章节引用的上下文
     ↓
 Planner / Agent
 ```
 
-GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和项目知识，不用于替代 GeoPandas 的数值计算。当前使用 6 条章节级样例衡量 Hit Rate@3 与 MRR；回答忠实度和引用正确率的 LLM-as-judge/人工评测将在完整 Eval 阶段加入。
+GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和项目知识，不用于替代 GeoPandas 的数值计算。当前使用 10 条人工黄金样例衡量 Precision@K、Recall@K、MRR 与 NDCG；回答忠实度和引用正确率的 LLM-as-judge/人工评测将在完整 Eval 阶段加入。
 
 ## MCP 在哪里
 
@@ -96,3 +138,39 @@ GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和�
 5. MCP Server，将稳定 GIS 能力提供给外部 Agent。
 
 这套顺序先保证 Agent 会正确计算和失败，再增加知识、记忆与产品界面，便于定位每个阶段的问题并形成可展示的工程提交历史。
+
+## 迭代记录
+
+### 2026-08-27：RAG 检索评估 Baseline V1
+
+- 变更：黄金标签从单一“来源 + 章节”升级为可包含多个目标、正文子串和 1～3 级相关度。
+- 指标：新增 Precision@K、Recall@K 与 NDCG@K，保留 Hit Rate@K 和 MRR。
+- 测试：新增排名第 2 的位置折扣测试和多等级相关度 NDCG 测试；全项目 135 项测试通过。
+- 真实结果：Top-3 下 Hit Rate 1.0、Precision 0.3333、Recall 1.0、MRR 0.9167、NDCG 0.9385。
+- 取舍：每个当前问题只标注一个严格黄金片段，因此 Precision@3 理论值为 1/3；不通过放宽标签制造更高分数。
+- 局限：只有 2 份文档和 6 条人工 Query，尚未评估生成答案忠实度与引用正确率。
+- 下一步：固定其他变量，对比多组 chunk size/overlap，验证 700/100 的参数依据。
+
+### 2026-08-27：建立双文档持续维护机制
+
+- 方法记录：本文件统一维护所有 Agent 组件的实际实现、证据、取舍和变更历史。
+- 面试记录：`docs/AGENT_INTERVIEW_QA.md` 统一维护项目化问题与回答。
+- 仓库规则：根目录 `AGENTS.md` 要求未来 Agent 相关修改必须同时更新两份文档。
+
+### 2026-08-27：Chunking 控制变量实验 V1
+
+- 变更：新增 `rag-chunk-experiment`，复用同一 Embedding Provider，对多组 size/overlap 分别建索引并运行同一黄金集。
+- 语料：新增公共设施候选选址知识，知识库扩展为 3 份文档；黄金集从 6 条扩展到 10 条。
+- 实验：比较 `300/50`、`500/80`、`700/100`、`900/120`。
+- 结果：`300/50` Recall@3 为 0.90；其余三组 Recall@3 为 1.0、MRR 为 0.90、NDCG@3 为 0.9262。
+- 决策：默认值由 `700/100` 改为 `500/80`。它保持完整召回，并比更长片段降低字符切块接近模型 token 上限的风险。
+- 证据：`docs/evaluations/RAG_CHUNK_EXPERIMENT_V1.md`；主索引重建为 3 文档、19 chunks。
+- 局限：字符数不等于 tokenizer token 数，耗时来自单次本机运行，不能作为严格性能基准。
+- 下一步：增加 token 感知统计，再进行 Hybrid Search 对照。
+
+### 2026-08-27：真实 DeepSeek Agent 检索验证
+
+- 验证方式：通过 `geopilot agent` 提问“公共设施候选点能否直接作为最终建设位置，还缺少哪些数据”，并明确要求先调用 `search_knowledge`、保留引用且不执行空间分析。
+- 实际行为：Agent 检索了新增的 `knowledge/facility_site_selection.md`，引用对应章节，说明候选点不等于最终建设位置，并列出道路与可达性、土地利用与规划、权属、地形水文、生态灾害和建筑等缺失数据。
+- 安全边界：本次请求只需要知识回答，Agent 没有调用 GIS 分析工具，也没有生成或执行分析计划。
+- 结论：验证链路覆盖了“真实模型判断是否检索 → 工具调用 → 本地向量检索 → 带来源回答”，不仅是单元测试中的直接函数调用。
