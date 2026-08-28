@@ -6,7 +6,7 @@
 
 本文件只记录已经由源码、测试或真实运行证明的事实；规划中的功能必须明确标记为“未实现”，不能因为出现在路线图里就写成已完成。
 
-这份文档区分“已经形成第一条可运行闭环”和“完整大模型应用的全部组件”。第一条闭环是：自然语言问题 → LLM 规划与工具调用 → 人工审批 → 确定性 GIS 执行 → 验证 → 地图数据与报告。RAG/Embedding 和用户确认型长期记忆已分别作为知识链路与个性化链路接入；系统化 Agent 评测、Web UI 和 MCP 仍是后续独立阶段。
+这份文档区分“已经形成第一条可运行闭环”和“完整大模型应用的全部组件”。第一条闭环是：自然语言问题 → LLM 规划与工具调用 → 人工审批 → 确定性 GIS 执行 → 验证 → 地图数据与报告。RAG/Embedding、用户确认型长期记忆、Agent Eval V1 和脱敏 Trace 已分别接入；生成答案语义评测、token/成本监控、Web UI 和 MCP 仍是后续独立阶段。
 
 ## 当前调用链
 
@@ -32,6 +32,9 @@ PlanStore（awaiting_approval → approved / rejected）
 RunStore（步骤检查点、失败信息、产物元数据）
     ↓
 GeoPackage / GeoJSON / Markdown
+
+旁路质量链路：版本化 Agent Cases → 真实 Agent Run → 结果/过程/安全规则评分
+旁路观测链路：普通 Agent Run → 脱敏 Trace JSONL → trace-list
 ```
 
 ## 已有组件及源码位置
@@ -62,7 +65,9 @@ GeoPackage / GeoJSON / Markdown
 | 检索评估 | 已完成第一版 | `src/geopilot/rag/evaluation.py`、`knowledge/retrieval_cases.json` | 按来源、章节、正文标签与相关度等级计算 Precision、Recall、MRR 和 NDCG |
 | Cross-Encoder Rerank | 已实现并完成首轮评估，默认关闭 | `src/geopilot/rag/reranking.py`、`rerank_experiment.py` | 对 Hybrid 候选成对打分；真实实验无收益，因此不替换默认 Hybrid |
 | Long-term Memory | 已完成安全第一版 | `src/geopilot/memory/`、`agent/runner.py`、`cli.py` | 显式确认写入、namespace 隔离、版本/过期/删除、相关召回和可关闭 Prompt 注入 |
-| 用户入口 | CLI 已完成 | `src/geopilot/cli.py` | 原有 Agent/执行命令及 rag-build、rag-search、rag-evaluate |
+| Agent Eval | 已完成规则评测 V1 | `src/geopilot/evaluation/`、`evals/agent_cases_v1.json` | 评估任务结果、必需/禁用工具、正确失败、步骤效率、重复调用和延迟 |
+| Observability | 已完成脱敏 Trace V1 | `src/geopilot/observability/` | 以 JSONL 保存提示词哈希、轮数、工具元数据、耗时和终态，不保存模型可见正文 |
+| 用户入口 | CLI 已完成 | `src/geopilot/cli.py` | Agent/执行、RAG、Memory、Agent Eval 与 trace-list 命令 |
 
 ## 当前采用的方法与技术取舍
 
@@ -121,6 +126,18 @@ GeoPilot 明确区分四类状态：
 
 当前不是生产级记忆平台：没有语义同义词召回、自动会话摘要、模型写入提案、人审冲突合并、并发锁、加密、身份认证或租户授权；敏感 key 拦截也不能替代 DLP。
 
+## Agent Eval 与可观测性现在有什么
+
+`evaluation/models.py` 把每道 Agent 题定义为版本化契约：预期 `completed` 或 `correct_failure`、必需工具、禁用工具、答案稳定子串、预期错误码、最大模型轮数/工具调用数和精确重复调用策略。`evaluation/agent_evaluator.py` 运行完整 `AgentRunner`，从最终答案与消息/工具轨迹计算任务成功率、正确失败恢复率、必需工具召回率、工具成功率、禁用工具违规率、精确重复率、步骤效率、轮数、调用数和耗时。
+
+V1 金标准位于 `evals/agent_cases_v1.json`，包含有效数据检查、检查后 CRS 推荐、RAG 规则问答和缺失文件正确失败 4 类任务。评测关闭 Long-term Memory，并把可能误提交的计划写入临时目录，避免用户状态和副作用污染回归。`agent-evaluate` 可打印并可选保存 JSON 结果。
+
+2026-08-28 的真实 `deepseek-v4-flash` 结果为：4 题通过 3 题，Task Success 0.75、Required Tool Recall 1.0、Error Recovery 1.0、Forbidden Violation 0、Mean Step Efficiency 0.875、总耗时 26.92 秒。唯一失败是 RAG Case 进行了两次参数不同的 `search_knowledge`，答案正确但超过一步预算；项目保留此失败，不调整 Case 制造满分。
+
+`observability/` 默认把普通 `agent` 运行追加到 `artifacts/traces/agent_runs.jsonl`。Trace 只含提示词 SHA-256、provider/model、状态、耗时、模型轮数、工具名/成功状态/错误码、答案字符数和顶层错误码；不保存 API Key、原始 Prompt、工具参数/输出、Tool Call ID 或完整回答。`--no-trace` 可关闭，`trace-list` 可按状态和数量读取。Trace 写入失败只输出 warning，不改变原 Agent 成败。
+
+当前规则评测不能判断答案整体忠实度、相关性和引用正确率；JSONL 也没有并发锁、集中日志、告警、保留策略或访问控制，低熵 Prompt 哈希存在字典反推风险。供应商 token usage 尚未接入，因此 V1 没有成本指标。完整证据见 `docs/evaluations/AGENT_EVAL_V1.md`。
+
 ## RAG、Embedding 在哪里
 
 第 8 阶段已经实现以下链路：
@@ -141,7 +158,7 @@ Vector Store
 Planner / Agent
 ```
 
-GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和项目知识，不用于替代 GeoPandas 的数值计算。当前使用 20 条人工黄金 Query、24 个相关标签衡量 Precision@K、Recall@K、MRR 与 NDCG；回答忠实度和引用正确率的 LLM-as-judge/人工评测将在完整 Eval 阶段加入。
+GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和项目知识，不用于替代 GeoPandas 的数值计算。当前使用 20 条人工黄金 Query、24 个相关标签衡量 Precision@K、Recall@K、MRR 与 NDCG；Agent Eval V1 已覆盖是否调用检索工具和步骤预算，回答忠实度和引用正确率的 LLM-as-judge/人工评测仍未实现。
 
 ## MCP 在哪里
 
@@ -149,7 +166,7 @@ GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和�
 
 ## 后续完整组件顺序
 
-1. Eval、Tracing、日志、token/成本统计与回归数据集。
+1. 扩充 Agent 回归集，增加生成答案 Judge、供应商 token/成本统计和 Trace 聚合告警。
 2. FastAPI、Web GIS 图形界面、数据库和权限边界。
 3. Docker、CI/CD、安全检查和部署。
 4. MCP Server，将稳定 GIS 能力提供给外部 Agent。
@@ -246,3 +263,15 @@ GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和�
 - 自动化：覆盖确认、revision、过期、namespace、删除、损坏文件、敏感 key、相关召回、字符上限、Agent 注入、CLI 生命周期和关闭开关；全项目 162 项测试、Ruff、格式和 Pyright 均通过；证据见 `docs/evaluations/MEMORY_V1.md`。
 - 局限：词法召回不理解无共同 token 的同义表达；本地 JSON 无并发、加密与认证；没有自动摘要或模型写入审批流，不能描述为生产级多用户记忆。
 - 下一步：进入 Agent Eval 与可观测性，量化任务完成率、工具选择、步骤效率、错误恢复、延迟和 token 成本。
+
+### 2026-08-28：Agent Eval 与脱敏 Trace V1
+
+- 评测合同：新增 `AgentEvaluationCase`、Case/聚合结果模型和 JSON 加载校验；同时评价最终稳定事实、必需/禁用工具、预期错误、轮数、调用预算和精确重复。
+- 运行隔离：`agent-evaluate` 禁用长期记忆，误提交计划只进入临时目录；V1 固定 4 条正常、RAG、组合工具与正确失败任务。
+- 真实结果：`deepseek-v4-flash` Task Success 0.75、Required Tool Recall 1.0、Error Recovery 1.0、Forbidden Violation 0、Exact Duplicate 0、Mean Step Efficiency 0.875，总耗时 26,924.47ms。
+- 回归证据：RAG Case 答案与工具选择正确，但使用两次参数不同的 `search_knowledge`，超过一次调用预算而失败；没有事后放宽 Case。
+- 可观测性：新增 append-only JSONL Trace、`--no-trace` 和 `trace-list`；默认只存 Prompt 哈希、模型、状态、耗时、轮数、工具元数据、答案长度和错误码。
+- 真实 Trace：DeepSeek 单工具数据检查记录 2 轮、1 次成功工具调用和 4,074.04ms，序列化内容不含原 Prompt、参数、结果正文或 Tool Call ID。
+- 自动化：全项目 176 项测试通过，Ruff、格式和 Pyright 均为 0 错误；证据见 `docs/evaluations/AGENT_EVAL_V1.md`。
+- 局限：4 条 Case 不代表生产可靠性；规则评测不等于生成忠实度 Judge；尚无 token/成本、并发日志锁、集中告警和访问控制。
+- 下一步：扩充噪声/高风险/计划纠错 Case 并接入 usage；然后进入 FastAPI 与 Web GIS 产品层。

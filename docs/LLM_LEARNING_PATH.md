@@ -26,7 +26,8 @@ GeoPilot 后续大模型部分以[卡码大模型学习路线](https://notes.kam
 | RAG 在线链路 | Query Embedding、Dense + BM25、RRF、可选 Cross-Encoder、引用、Agent 工具 | 检索侧完成 | Dense/Hybrid/Rerank 对照与章节级黄金集 |
 | RAG 优化 | 混合检索与 Rerank 已评估；Rerank 无收益故默认关闭 | 当前阶段完成 | 20 Query、24 标签的控制变量实验 |
 | RAG 评估 | Precision、Recall、MRR、NDCG | 检索侧完成 | `docs/evaluations/RAG_RERANK_V1.md` |
-| Agent 设计 | LLM 决策 + 确定性 Workflow + 人工审批 | 核心闭环完成 | 任务成功率、死循环与权限边界评估 |
+| Agent 设计 | LLM 决策 + 确定性 Workflow + 人工审批 | 核心闭环完成 | 结构化计划、执行恢复与真实 Tool Calling |
+| Agent Eval 与 Trace | 结果/过程/安全规则评测、正确失败、脱敏 JSONL | V1 完成 | 4-Case DeepSeek Task Success 0.75；176 项自动化测试 |
 | Memory | 工作记忆、任务状态、长期偏好/目标/背景 | 安全第一版完成 | 用户确认、namespace、revision、过期、删除、词法召回和 Prompt 边界 |
 | MCP | 对外发布稳定 GIS 工具 | 待开始 | MCP Server、外部客户端调用测试 |
 | 部署与工程化 | API、Web GIS、容器、CI/CD、监控 | 待开始 | 延迟、吞吐、成本、可用性和安全指标 |
@@ -42,9 +43,11 @@ GeoPilot 后续大模型部分以[卡码大模型学习路线](https://notes.kam
 4. 已完成：用 BGE 的真实 tokenizer 统计完整 Embedding 输入，并在正式建库前拒绝超限 Chunk。
 5. 已完成：加入透明 BM25 关键词检索，用 RRF 与 Dense 融合；默认 Hybrid 在当前小样本上改善 MRR/NDCG。
 6. 已完成：扩充为 20 条困难 Query、24 个标签，以 12 个 Hybrid 候选对照 `BAAI/bge-reranker-base`；Rerank 的 Recall/NDCG 下降且 CPU 延迟显著增加，因此默认关闭。
-7. 后续 Eval 阶段：增加回答忠实度、答案相关性、引用正确率和拒答评估。
+7. 后续生成评测：增加回答忠实度、答案相关性、引用正确率和拒答评估；完整 Agent 的过程规则评测已在 V1 实现。
 
-Memory V1 已完成：区分 Working Memory、Plan/Run Session State、Long-term Memory 与 RAG；只允许用户确认的三类稳定信息，并实现作用域、更新、过期、删除、相关召回和 `--no-memory`。下一阶段进入 Agent Eval 与可观测性，量化任务完成率、工具选择准确率、步骤效率、错误恢复率、延迟和 token 成本。
+Memory V1 已完成：区分 Working Memory、Plan/Run Session State、Long-term Memory 与 RAG；只允许用户确认的三类稳定信息，并实现作用域、更新、过期、删除、相关召回和 `--no-memory`。
+
+Agent Eval 与可观测性 V1 也已完成：`evals/agent_cases_v1.json` 用 4 条任务分别检查正常数据、组合工具、RAG 和正确失败；真实 DeepSeek 的 Task Success、Required Tool Recall、Error Recovery 为 0.75/1.0/1.0。唯一失败是二次检索超过步骤预算。普通 Agent 默认写入不含 Prompt/参数/输出正文的脱敏 JSONL Trace。当前尚未完成生成答案 Faithfulness/引用 Judge、token/成本和集中监控，下一阶段在保留 V1 回归的前提下进入 FastAPI 与 Web GIS 产品层。
 
 ## 主要参考
 

@@ -38,7 +38,7 @@ Evaluation / Tracing / Storage / Deployment / MCP
 | 7 | Approved Plan Executor | 已完成 | 稳定产物 ID、严格参数契约、依赖编译、运行存储、工具调度、失败停止、检查点恢复与 CLI |
 | 8 | RAG 与 Embedding | 检索侧阶段完成 | 已完成结构感知切块、token 超限护栏、FastEmbed、BM25、RRF、20 条困难集、可选 Cross-Encoder 与控制变量实验；Rerank 实测无收益故默认关闭，生成侧评估并入阶段 10 |
 | 9 | Memory | 安全第一版完成 | 已区分 Working Memory、Session State、Long-term Memory 与 RAG；实现用户确认写入、namespace、revision、过期、删除、相关召回、Prompt 边界与关闭开关 |
-| 10 | Eval 与可观测性 | 待开始 | 测试集、工具成功率、幻觉率、Tracing、日志、成本 |
+| 10 | Eval 与可观测性 | 规则评测与脱敏 Trace V1 完成 | 已有 4 条版本化 Agent Case、任务/工具/正确失败/步骤/安全指标和 JSONL Trace；生成忠实度 Judge、token/成本、集中监控待补 |
 | 11 | 产品与部署 | 待开始 | FastAPI、Web UI、数据库、Docker、CI/CD、安全 |
 | 12 | MCP | 待开始 | 将稳定 GIS 工具发布为可复用 MCP Server |
 

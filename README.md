@@ -2,7 +2,7 @@
 
 GeoPilot 是一个自然语言驱动的地理空间分析 Agent。用户提供空间数据和分析问题，Agent 将检查数据、规划分析步骤、调用 GIS 工具、验证结果，并生成地图与报告。
 
-> 当前项目处于 v0.1 开发阶段。本仓库已经跑通自然语言规划、人工审批、确定性 GIS 执行、结果验证与报告，并加入了带引用的本地 RAG、中文 Embedding、离线检索评估和用户确认型长期记忆。
+> 当前项目处于 v0.1 开发阶段。本仓库已经跑通自然语言规划、人工审批、确定性 GIS 执行、结果验证与报告，并加入了带引用的本地 RAG、中文 Embedding、长期记忆、完整 Agent 规则评测和脱敏运行 Trace。
 
 ## 演示场景
 
@@ -26,6 +26,8 @@ GeoPilot 是一个自然语言驱动的地理空间分析 Agent。用户提供�
 - Markdown/TXT 知识加载、层级切块、本地中文 Embedding、Hybrid Search、可选 Cross-Encoder 与来源引用
 - RAG 的章节级 Precision/Recall/MRR/NDCG 离线评估及 Agent `search_knowledge` 工具
 - 用户确认的长期偏好/目标/项目背景，支持 namespace、revision、过期、删除和按 Query 注入
+- 版本化 Agent 金标准任务、正确失败/工具/步骤/安全指标和真实 DeepSeek 回归
+- 默认脱敏 JSONL Trace，只保存 Prompt 哈希、工具元数据、耗时、轮数和终态
 - Ruff、Pyright 和 Pytest 质量检查
 
 完整组件规划与各阶段验收标准见 [GeoPilot 项目路线图](docs/PROJECT_ROADMAP.md)。
@@ -212,7 +214,7 @@ uv run geopilot show-run <run_id>
 uv run geopilot resume <run_id>
 ```
 
-完整 Agent 组件、实际方法和迭代证据见 [Agent 组件与工程实现记录](docs/AGENT_COMPONENTS.md)，对应的面试追问与项目化回答见 [Agent 面试问题与项目化回答](docs/AGENT_INTERVIEW_QA.md)。以后每次 Agent 相关推进都会同步追加这两份主文档。第一条“问题 → 规划 → 审批 → 执行 → 报告”闭环、本地 RAG 和长期记忆 V1 已经具备；完整 Agent 评测、Web UI 和 MCP 仍按路线图分阶段实现。
+完整 Agent 组件、实际方法和迭代证据见 [Agent 组件与工程实现记录](docs/AGENT_COMPONENTS.md)，对应的面试追问与项目化回答见 [Agent 面试问题与项目化回答](docs/AGENT_INTERVIEW_QA.md)。以后每次 Agent 相关推进都会同步追加这两份主文档。第一条“问题 → 规划 → 审批 → 执行 → 报告”闭环、本地 RAG、长期记忆、Agent Eval V1 与脱敏 Trace 已经具备；生成语义评测、Web UI 和 MCP 仍按路线图分阶段实现。
 
 ## 长期记忆
 
@@ -239,6 +241,25 @@ uv run geopilot memory-delete <memory_id> --namespace default
 ```
 
 普通 `agent` 命令默认从 `artifacts/memory/profile.json` 读取 namespace `default`。可用 `--memory-namespace` 切换隔离范围，或用 `--no-memory` 完全关闭读取。Memory 值只用于个性化，不能覆盖工具事实、人工审批、System Prompt 或当前用户输入。完整设计与真实 DeepSeek 验证见 [Long-term Memory V1](docs/evaluations/MEMORY_V1.md)。
+
+## Agent 评测与脱敏 Trace
+
+运行版本化的完整 Agent 基准：
+
+```powershell
+uv run geopilot agent-evaluate evals/agent_cases_v1.json --provider deepseek --output artifacts/evaluations/agent_eval_v1.json
+```
+
+V1 的 4 条 Case 覆盖数据检查、检查后 CRS 推荐、RAG 问答和文件缺失的正确失败。每条题同时检查最终稳定事实、必需/禁用工具、预期错误、轮数、调用预算和精确重复。真实 `deepseek-v4-flash` 的 Task Success、Required Tool Recall、Error Recovery 为 `0.75 / 1.0 / 1.0`；唯一失败是 RAG 问题进行了两次不同参数的检索，超过一步预算。
+
+普通 `agent` 默认把脱敏元数据追加到 `artifacts/traces/agent_runs.jsonl`，查看最近记录：
+
+```powershell
+uv run geopilot trace-list --limit 20
+uv run geopilot trace-list --status failed
+```
+
+Trace 不保存 API Key、原始 Prompt、工具参数/输出或完整回答。可用 `agent --no-trace` 完全关闭。设计、指标和限制见 [Agent Eval 与可观测性 V1](docs/evaluations/AGENT_EVAL_V1.md)。
 
 ## 本地 RAG 与 Embedding
 
@@ -320,6 +341,8 @@ uv run geopilot rag-rerank-experiment knowledge/retrieval_cases.json --top-k 3 -
 - `10`：计划编译、执行检查点或 GIS 工具执行失败
 - `11`：知识加载、Embedding、向量索引、检索或 RAG 评估失败
 - `12`：长期记忆确认、策略、存储、召回或删除失败
+- `13`：Agent 评测 Case、运行或结果保存失败
+- `14`：Trace 文件损坏或查询参数无效
 
 PowerShell 可以通过 `$LASTEXITCODE` 查看退出码；Windows CMD 可以运行 `echo %ERRORLEVEL%`。
 
@@ -339,12 +362,15 @@ src/geopilot/
 ├── agent/                 # Prompt、模型接口、工具注册表与 Agent Loop
 ├── cli.py                 # 命令行适配层
 ├── execution/             # 已批准计划编译、工具调度、运行检查点与恢复
+├── evaluation/            # 完整 Agent 结果、过程、效率与安全评测
 ├── memory/                # 用户确认型长期记忆、原子存储与相关上下文筛选
 ├── models.py              # Pydantic 数据契约
+├── observability/         # 不保存模型正文的本地脱敏运行 Trace
 ├── rag/                   # 文档加载、切块、Embedding、向量索引、检索与评估
 ├── tools/                 # 可独立测试的确定性 GIS 工具
 └── workflows/             # 组合多个工具的业务流水线
 knowledge/                 # GIS 知识文档与章节级检索评估集
+evals/                     # 版本化完整 Agent 金标准任务集
 scripts/
 └── generate_sample_data.py
 examples/data/             # 可复现的虚构演示数据
@@ -372,6 +398,7 @@ uv run pytest -q
 - [x] 验证分析结果并输出 GeoJSON 与 Markdown 报告
 - [x] 本地 RAG、中文 Embedding、引用和章节级检索评估
 - [x] 用户确认型长期记忆、作用域、过期、删除和 Agent 注入
+- [x] 完整 Agent 规则评测、真实 DeepSeek 回归和脱敏 Trace
 - [ ] 提供可交互的 Web 界面
 
 ## v0.1 验收标准

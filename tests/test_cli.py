@@ -14,6 +14,7 @@ from geopilot.agent.models import ModelResponse, ToolCall
 from geopilot.cli import (
     EXIT_AGENT_ERROR,
     EXIT_CONFIGURATION_ERROR,
+    EXIT_EVALUATION_ERROR,
     EXIT_EXECUTION_ERROR,
     EXIT_FILE_NOT_FOUND,
     EXIT_INPUT_ERROR,
@@ -21,6 +22,7 @@ from geopilot.cli import (
     EXIT_PLAN_ERROR,
     EXIT_RAG_ERROR,
     EXIT_SUCCESS,
+    EXIT_TRACE_ERROR,
     EXIT_VALIDATION_ERROR,
     build_parser,
     main,
@@ -63,6 +65,7 @@ def test_main_without_command_prints_help(
     assert exit_code == EXIT_SUCCESS
     assert "inspect" in captured.out
     assert "agent" in captured.out
+    assert "agent-evaluate" in captured.out
     assert "show-plan" in captured.out
     assert "approve" in captured.out
     assert "reject" in captured.out
@@ -79,6 +82,7 @@ def test_main_without_command_prints_help(
     assert "memory-list" in captured.out
     assert "memory-recall" in captured.out
     assert "memory-delete" in captured.out
+    assert "trace-list" in captured.out
 
 
 def test_memory_cli_requires_confirmation_and_supports_full_lifecycle(
@@ -264,13 +268,88 @@ def test_main_runs_agent_without_network(
 
     monkeypatch.setattr(cli_module, "build_model", build_fake_model)
 
-    exit_code = main(["agent", "检查示例数据", "--max-output-tokens", "5000"])
+    exit_code = main(
+        [
+            "agent",
+            "检查示例数据",
+            "--max-output-tokens",
+            "5000",
+            "--no-trace",
+        ]
+    )
     captured = capsys.readouterr()
 
     assert exit_code == EXIT_SUCCESS
     assert captured_max_tokens == [5000]
     assert captured.out == "Agent 已返回测试答案。\n"
     assert captured.err == ""
+
+
+def test_main_evaluates_agent_without_network(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class FakeModel:
+        def complete(self, messages: object, tools: object) -> ModelResponse:
+            return ModelResponse(content="评测任务完成。")
+
+    cases_path = tmp_path / "agent-cases.json"
+    cases_path.write_text(
+        json.dumps(
+            [
+                {
+                    "case_id": "answer_only",
+                    "prompt": "直接回答",
+                    "required_answer_contains": ["完成"],
+                    "max_model_turns": 1,
+                    "max_tool_calls": 0,
+                }
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "result.json"
+    monkeypatch.setenv("GEOPILOT_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("GEOPILOT_MODEL", "test-model")
+    monkeypatch.setattr(cli_module, "build_model", lambda settings: FakeModel())
+
+    exit_code = main(
+        [
+            "agent-evaluate",
+            str(cases_path),
+            "--knowledge-index",
+            str(tmp_path / "missing-index.json"),
+            "--output",
+            str(output_path),
+        ]
+    )
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == EXIT_SUCCESS
+    assert captured.err == ""
+    assert payload["task_success_rate"] == 1.0
+    assert payload["case_count"] == 1
+    assert json.loads(output_path.read_text(encoding="utf-8")) == payload
+
+
+def test_agent_evaluation_reports_invalid_empty_case_set(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cases_path = tmp_path / "empty-cases.json"
+    cases_path.write_text("[]", encoding="utf-8")
+
+    exit_code = main(["agent-evaluate", str(cases_path)])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.err)
+
+    assert exit_code == EXIT_EVALUATION_ERROR
+    assert captured.out == ""
+    assert payload["error"]["code"] == "invalid_agent_evaluation"
 
 
 def test_agent_no_memory_bypasses_an_invalid_memory_store(
@@ -296,6 +375,7 @@ def test_agent_no_memory_bypasses_an_invalid_memory_store(
             "--memory-path",
             str(memory_path),
             "--no-memory",
+            "--no-trace",
         ]
     )
     captured = capsys.readouterr()
@@ -306,6 +386,7 @@ def test_agent_no_memory_bypasses_an_invalid_memory_store(
 
 
 def test_main_reports_bounded_trace_after_agent_max_turns(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -330,7 +411,17 @@ def test_main_reports_bounded_trace_after_agent_max_turns(
         lambda settings: LoopingModel(),
     )
 
-    exit_code = main(["agent", "持续调用工具", "--max-turns", "2"])
+    trace_path = tmp_path / "agent-runs.jsonl"
+    exit_code = main(
+        [
+            "agent",
+            "持续调用工具",
+            "--max-turns",
+            "2",
+            "--trace-path",
+            str(trace_path),
+        ]
+    )
     captured = capsys.readouterr()
     payload = json.loads(captured.err)
 
@@ -352,6 +443,43 @@ def test_main_reports_bounded_trace_after_agent_max_turns(
             "error": "Tool is not registered: missing_tool",
         },
     ]
+
+    list_exit_code = main(
+        ["trace-list", "--trace-path", str(trace_path), "--status", "failed"]
+    )
+    listed = json.loads(capsys.readouterr().out)
+
+    assert list_exit_code == EXIT_SUCCESS
+    assert listed[0]["status"] == "failed"
+    assert listed[0]["error_code"] == "agent_max_turns"
+    assert listed[0]["tool_calls"][0] == {
+        "sequence": 1,
+        "name": "missing_tool",
+        "success": False,
+        "error_code": "unknown_tool",
+    }
+    serialized = json.dumps(listed, ensure_ascii=False)
+    assert "持续调用工具" not in serialized
+    assert "call-loop" not in serialized
+
+
+def test_trace_list_reports_invalid_query(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = main(
+        [
+            "trace-list",
+            "--trace-path",
+            str(tmp_path / "missing.jsonl"),
+            "--limit",
+            "0",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().err)
+
+    assert exit_code == EXIT_TRACE_ERROR
+    assert payload["error"]["code"] == "invalid_trace_query"
 
 
 def test_main_inspects_valid_dataset(

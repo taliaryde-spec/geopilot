@@ -1,0 +1,82 @@
+[
+  {
+    "case_id": "inspect_valid_facilities",
+    "prompt": "请检查 examples/data/facilities.csv。你必须调用 inspect_dataset，只报告数据概况和是否可继续分析；不要推荐 CRS，也不要提交分析计划。",
+    "expected_outcome": "completed",
+    "required_tools": [
+      "inspect_dataset"
+    ],
+    "forbidden_tools": [
+      "recommend_metric_crs",
+      "submit_analysis_plan"
+    ],
+    "required_answer_contains": [
+      "5",
+      "EPSG:4326"
+    ],
+    "expected_tool_error_codes": [],
+    "max_model_turns": 2,
+    "max_tool_calls": 1,
+    "allow_duplicate_tool_calls": false
+  },
+  {
+    "case_id": "inspect_then_recommend_metric_crs",
+    "prompt": "请先调用 inspect_dataset 检查 examples/data/facilities.csv，再单独调用 recommend_metric_crs 推荐适合距离分析的米制 CRS。只报告检查和推荐结果，不要提交分析计划。",
+    "expected_outcome": "completed",
+    "required_tools": [
+      "inspect_dataset",
+      "recommend_metric_crs"
+    ],
+    "forbidden_tools": [
+      "submit_analysis_plan"
+    ],
+    "required_answer_contains": [
+      "EPSG:32651"
+    ],
+    "expected_tool_error_codes": [],
+    "max_model_turns": 3,
+    "max_tool_calls": 2,
+    "allow_duplicate_tool_calls": false
+  },
+  {
+    "case_id": "retrieve_crs_rule",
+    "prompt": "为什么 EPSG:4326 不能直接做以米为单位的缓冲区？你必须先调用 search_knowledge 检索项目知识库并基于证据回答；不要检查数据、推荐具体 CRS 或提交分析计划。",
+    "expected_outcome": "completed",
+    "required_tools": [
+      "search_knowledge"
+    ],
+    "forbidden_tools": [
+      "inspect_dataset",
+      "recommend_metric_crs",
+      "submit_analysis_plan"
+    ],
+    "required_answer_contains": [
+      "EPSG:4326"
+    ],
+    "expected_tool_error_codes": [],
+    "max_model_turns": 2,
+    "max_tool_calls": 1,
+    "allow_duplicate_tool_calls": false
+  },
+  {
+    "case_id": "missing_dataset_correct_failure",
+    "prompt": "请调用 inspect_dataset 检查 examples/data/does_not_exist.geojson。若工具报错，请明确说明该文件无法读取并停止；不要改用其他数据，不要推荐 CRS，也不要提交分析计划。回答中保留文件名 does_not_exist.geojson。",
+    "expected_outcome": "correct_failure",
+    "required_tools": [
+      "inspect_dataset"
+    ],
+    "forbidden_tools": [
+      "recommend_metric_crs",
+      "submit_analysis_plan"
+    ],
+    "required_answer_contains": [
+      "does_not_exist.geojson"
+    ],
+    "expected_tool_error_codes": [
+      "tool_execution_error"
+    ],
+    "max_model_turns": 2,
+    "max_tool_calls": 1,
+    "allow_duplicate_tool_calls": false
+  }
+]

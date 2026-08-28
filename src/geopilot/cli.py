@@ -5,6 +5,8 @@ import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from time import perf_counter
 
 from geopilot.agent import (
     AgentMaxTurnsError,
@@ -17,7 +19,9 @@ from geopilot.agent import (
     ModelSettings,
     build_model,
 )
+from geopilot.agent.models import ToolResult
 from geopilot.agent.tool_adapters import build_default_tool_registry
+from geopilot.evaluation import evaluate_agent, load_agent_evaluation_cases
 from geopilot.execution import (
     ApprovedPlanExecutor,
     ExecutionStatus,
@@ -33,6 +37,13 @@ from geopilot.memory import (
     MemoryStore,
     MemoryStoreError,
     MemoryWriteRequest,
+)
+from geopilot.observability import (
+    DEFAULT_TRACE_PATH,
+    AgentTraceStatus,
+    TraceStore,
+    TraceStoreError,
+    build_agent_trace,
 )
 from geopilot.planning.store import PlanStore, PlanStoreError
 from geopilot.rag import (
@@ -76,6 +87,8 @@ EXIT_PLAN_ERROR = 9
 EXIT_EXECUTION_ERROR = 10
 EXIT_RAG_ERROR = 11
 EXIT_MEMORY_ERROR = 12
+EXIT_EVALUATION_ERROR = 13
+EXIT_TRACE_ERROR = 14
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -172,6 +185,69 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable long-term memory recall for this Agent run.",
     )
+    agent_parser.add_argument(
+        "--trace-path",
+        type=Path,
+        default=DEFAULT_TRACE_PATH,
+        help="Append redacted run metadata to this local JSONL file.",
+    )
+    agent_parser.add_argument(
+        "--no-trace",
+        action="store_true",
+        help="Disable local redacted tracing for this Agent run.",
+    )
+
+    agent_evaluate_parser = subparsers.add_parser(
+        "agent-evaluate",
+        help="Evaluate Agent outcomes, tool use, efficiency, and safety.",
+    )
+    agent_evaluate_parser.add_argument(
+        "cases",
+        nargs="?",
+        type=Path,
+        default=Path("evals") / "agent_cases_v1.json",
+        help="Version-controlled Agent gold cases.",
+    )
+    agent_evaluate_parser.add_argument(
+        "--knowledge-index",
+        type=Path,
+        default=DEFAULT_KNOWLEDGE_INDEX,
+        help="Optional local RAG index used by search_knowledge cases.",
+    )
+    agent_evaluate_parser.add_argument(
+        "--model-cache",
+        type=Path,
+        default=DEFAULT_MODEL_CACHE,
+        help="Local FastEmbed model cache directory.",
+    )
+    agent_evaluate_parser.add_argument(
+        "--provider",
+        choices=[provider.value for provider in ModelProvider],
+        default=None,
+        help="Override GEOPILOT_PROVIDER for this evaluation.",
+    )
+    agent_evaluate_parser.add_argument(
+        "--model",
+        default=None,
+        help="Override GEOPILOT_MODEL for this evaluation.",
+    )
+    agent_evaluate_parser.add_argument(
+        "--base-url",
+        default=None,
+        help="Override GEOPILOT_BASE_URL for this evaluation.",
+    )
+    agent_evaluate_parser.add_argument(
+        "--max-output-tokens",
+        type=int,
+        default=None,
+        help="Override the model response token limit for this evaluation.",
+    )
+    agent_evaluate_parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optionally persist the JSON result in addition to printing it.",
+    )
 
     show_plan_parser = subparsers.add_parser(
         "show-plan",
@@ -254,6 +330,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     memory_delete_parser.add_argument("memory_id", help="Memory identifier to delete.")
     _add_memory_storage_arguments(memory_delete_parser)
+
+    trace_list_parser = subparsers.add_parser(
+        "trace-list",
+        help="List recent redacted Agent run traces, newest first.",
+    )
+    trace_list_parser.add_argument(
+        "--trace-path",
+        type=Path,
+        default=DEFAULT_TRACE_PATH,
+    )
+    trace_list_parser.add_argument("--limit", type=int, default=20)
+    trace_list_parser.add_argument(
+        "--status",
+        type=AgentTraceStatus,
+        choices=list(AgentTraceStatus),
+        default=None,
+    )
 
     resume_parser = subparsers.add_parser(
         "resume",
@@ -557,6 +650,12 @@ def _print_error(code: str, message: str) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2), file=sys.stderr)
 
 
+def _print_warning(code: str, message: str) -> None:
+    """Write one non-fatal structured warning to standard error."""
+    payload = {"warning": {"code": code, "message": message}}
+    print(json.dumps(payload, ensure_ascii=False, indent=2), file=sys.stderr)
+
+
 def _print_max_turns_error(error: AgentMaxTurnsError) -> None:
     """Print a bounded tool trace without exposing full prompts or outputs."""
     payload = {
@@ -593,8 +692,12 @@ def _run_agent(
     memory_path: Path,
     memory_namespace: str,
     memory_enabled: bool,
+    trace_path: Path,
+    trace_enabled: bool,
 ) -> int:
     """Run the real-model Agent command and print its final answer."""
+    started = perf_counter()
+    settings: ModelSettings | None = None
     try:
         settings = ModelSettings.from_environment(
             provider=provider,
@@ -627,25 +730,219 @@ def _run_agent(
         _print_error("model_configuration_error", str(error))
         return EXIT_CONFIGURATION_ERROR
     except ModelRequestError as error:
+        _persist_agent_trace(
+            prompt,
+            settings=settings,
+            trace_path=trace_path,
+            trace_enabled=trace_enabled,
+            started=started,
+            status=AgentTraceStatus.FAILED,
+            error_code=error.code,
+        )
         _print_error(error.code, str(error))
         return EXIT_MODEL_ERROR
     except AgentMaxTurnsError as error:
+        _persist_agent_trace(
+            prompt,
+            settings=settings,
+            trace_path=trace_path,
+            trace_enabled=trace_enabled,
+            started=started,
+            status=AgentTraceStatus.FAILED,
+            model_turns=error.model_turns,
+            tool_results=error.tool_results,
+            error_code="agent_max_turns",
+        )
         _print_max_turns_error(error)
         return EXIT_AGENT_ERROR
     except (AgentProtocolError, ModelResponseError) as error:
+        _persist_agent_trace(
+            prompt,
+            settings=settings,
+            trace_path=trace_path,
+            trace_enabled=trace_enabled,
+            started=started,
+            status=AgentTraceStatus.FAILED,
+            error_code="agent_runtime_error",
+        )
         _print_error("agent_runtime_error", str(error))
         return EXIT_AGENT_ERROR
     except (EmbeddingError, VectorStoreError) as error:
+        _persist_agent_trace(
+            prompt,
+            settings=settings,
+            trace_path=trace_path,
+            trace_enabled=trace_enabled,
+            started=started,
+            status=AgentTraceStatus.FAILED,
+            error_code=error.code.value,
+        )
         _print_error(error.code.value, str(error))
         return EXIT_RAG_ERROR
     except MemoryStoreError as error:
+        _persist_agent_trace(
+            prompt,
+            settings=settings,
+            trace_path=trace_path,
+            trace_enabled=trace_enabled,
+            started=started,
+            status=AgentTraceStatus.FAILED,
+            error_code=error.code.value,
+        )
         _print_error(error.code.value, str(error))
         return EXIT_MEMORY_ERROR
     except ValueError as error:
+        _persist_agent_trace(
+            prompt,
+            settings=settings,
+            trace_path=trace_path,
+            trace_enabled=trace_enabled,
+            started=started,
+            status=AgentTraceStatus.FAILED,
+            error_code="invalid_agent_input",
+        )
         _print_error("invalid_agent_input", str(error))
         return EXIT_INPUT_ERROR
 
+    _persist_agent_trace(
+        prompt,
+        settings=settings,
+        trace_path=trace_path,
+        trace_enabled=trace_enabled,
+        started=started,
+        status=AgentTraceStatus.SUCCEEDED,
+        model_turns=result.model_turns,
+        tool_results=result.tool_results,
+        final_answer=result.final_answer,
+    )
     print(result.final_answer)
+    return EXIT_SUCCESS
+
+
+def _persist_agent_trace(
+    prompt: str,
+    *,
+    settings: ModelSettings | None,
+    trace_path: Path,
+    trace_enabled: bool,
+    started: float,
+    status: AgentTraceStatus,
+    model_turns: int = 0,
+    tool_results: Sequence[ToolResult] = (),
+    final_answer: str | None = None,
+    error_code: str | None = None,
+) -> None:
+    """Best-effort trace persistence that never changes the Agent outcome."""
+    if not trace_enabled or settings is None:
+        return
+    try:
+        TraceStore(trace_path).append(
+            build_agent_trace(
+                prompt,
+                provider=settings.provider.value,
+                model_name=settings.model,
+                status=status,
+                duration_ms=(perf_counter() - started) * 1000,
+                model_turns=model_turns,
+                tool_results=tool_results,
+                final_answer=final_answer,
+                error_code=error_code,
+            )
+        )
+    except (TraceStoreError, OSError, ValueError) as error:
+        _print_warning("trace_persistence_failed", str(error))
+
+
+def _run_trace_list(
+    *,
+    trace_path: Path,
+    limit: int,
+    status: AgentTraceStatus | None,
+) -> int:
+    """Print a bounded, newest-first view of redacted Agent runs."""
+    try:
+        traces = TraceStore(trace_path).list_traces(limit=limit, status=status)
+    except TraceStoreError as error:
+        _print_error(error.code.value, str(error))
+        return EXIT_TRACE_ERROR
+    except ValueError as error:
+        _print_error("invalid_trace_query", str(error))
+        return EXIT_TRACE_ERROR
+    print(
+        json.dumps(
+            [trace.model_dump(mode="json") for trace in traces],
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return EXIT_SUCCESS
+
+
+def _run_agent_evaluate(
+    cases_path: Path,
+    *,
+    provider: str | None,
+    model: str | None,
+    base_url: str | None,
+    max_output_tokens: int | None,
+    knowledge_index: Path,
+    model_cache: Path,
+    output_path: Path | None,
+) -> int:
+    """Run a controlled real-model benchmark with long-term memory disabled."""
+    try:
+        cases = load_agent_evaluation_cases(cases_path)
+        settings = ModelSettings.from_environment(
+            provider=provider,
+            model=model,
+            base_url=base_url,
+            max_output_tokens=max_output_tokens,
+        )
+        knowledge_retriever = (
+            open_knowledge_retriever(
+                index_path=knowledge_index,
+                cache_directory=model_cache,
+            )
+            if knowledge_index.is_file()
+            else None
+        )
+        with TemporaryDirectory(prefix="geopilot-agent-eval-") as plan_directory:
+            runner = AgentRunner(
+                build_model(settings),
+                build_default_tool_registry(
+                    plan_store=PlanStore(Path(plan_directory)),
+                    knowledge_retriever=knowledge_retriever,
+                ),
+                max_model_turns=max(case.max_model_turns for case in cases),
+            )
+            result = evaluate_agent(
+                runner,
+                cases,
+                provider=settings.provider.value,
+                model_name=settings.model,
+            )
+        payload = result.model_dump_json(indent=2)
+        if output_path is not None:
+            resolved_output = output_path.resolve()
+            resolved_output.parent.mkdir(parents=True, exist_ok=True)
+            resolved_output.write_text(f"{payload}\n", encoding="utf-8")
+    except ModelConfigurationError as error:
+        _print_error("model_configuration_error", str(error))
+        return EXIT_CONFIGURATION_ERROR
+    except ModelRequestError as error:
+        _print_error(error.code, str(error))
+        return EXIT_MODEL_ERROR
+    except (ModelResponseError, AgentProtocolError) as error:
+        _print_error("agent_evaluation_runtime_error", str(error))
+        return EXIT_EVALUATION_ERROR
+    except (EmbeddingError, VectorStoreError) as error:
+        _print_error(error.code.value, str(error))
+        return EXIT_RAG_ERROR
+    except (OSError, RuntimeError, ValueError) as error:
+        _print_error("invalid_agent_evaluation", str(error))
+        return EXIT_EVALUATION_ERROR
+
+    print(payload)
     return EXIT_SUCCESS
 
 
@@ -1094,6 +1391,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             memory_path=arguments.memory_path,
             memory_namespace=arguments.memory_namespace,
             memory_enabled=not arguments.no_memory,
+            trace_path=arguments.trace_path,
+            trace_enabled=not arguments.no_trace,
+        )
+    if arguments.command == "agent-evaluate":
+        return _run_agent_evaluate(
+            arguments.cases,
+            provider=arguments.provider,
+            model=arguments.model,
+            base_url=arguments.base_url,
+            max_output_tokens=arguments.max_output_tokens,
+            knowledge_index=arguments.knowledge_index,
+            model_cache=arguments.model_cache,
+            output_path=arguments.output,
         )
     if arguments.command == "show-plan":
         return _run_show_plan(arguments.plan_id, arguments.plans_dir)
@@ -1143,6 +1453,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             arguments.memory_id,
             memory_path=arguments.memory_path,
             namespace=arguments.namespace,
+        )
+    if arguments.command == "trace-list":
+        return _run_trace_list(
+            trace_path=arguments.trace_path,
+            limit=arguments.limit,
+            status=arguments.status,
         )
     if arguments.command == "resume":
         return _run_resume(

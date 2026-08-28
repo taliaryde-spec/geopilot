@@ -52,7 +52,7 @@ GeoPilot 的模型可见工具采用高内聚业务能力，例如数据检查�
 
 ### 11. 如何防止 Agent 死循环？
 
-Agent Runner 设置最大模型轮数。超过上限会停止并返回有界工具轨迹，只暴露工具名、成功状态和错误代码，不输出完整 Prompt、密钥或大型结果。后续 Eval 阶段还会统计重复工具调用率和任务成功率。
+Agent Runner 设置最大模型轮数。超过上限会停止并返回有界工具轨迹，只暴露工具名、成功状态和错误代码，不输出完整 Prompt、密钥或大型结果。Agent Eval V1 进一步统计任务成功率、精确重复调用率和步骤效率；真实 4-Case 实验没有死循环，但发现 RAG Case 做了两次不同参数的检索并因超过调用预算失败。
 
 ### 12. 当前短期记忆是什么？
 
@@ -152,7 +152,7 @@ Embedding 把 Query 和文档分别编码，文档向量可离线预计算，适
 
 ### 33. 只评估检索够吗？
 
-不够。后续还需评估 Faithfulness、Answer Relevancy、Context Relevancy、Context Recall、引用正确率、无答案拒答，以及完整 Agent 的任务成功率、工具选择准确率、平均轮数、延迟和成本。
+不够。GeoPilot 已增加完整 Agent 的任务成功率、必需/禁用工具、正确失败、步骤效率、平均轮数和延迟评估；仍需补充 Faithfulness、Answer Relevancy、Context Relevancy、引用正确率、无答案拒答，以及 token/成本。过程规则与生成语义 Judge 应分开报告，不能互相替代。
 
 ### 34. 你是怎么选择 `500/80` 的？
 
@@ -178,7 +178,7 @@ Function Calling 是模型输出结构化工具请求的机制；MCP 是客户�
 
 ### 39. 当前系统最大的不足是什么？
 
-RAG 语料和黄金集仍小，只支持 Markdown/TXT；虽然已有 Hybrid 和可选 Rerank，但没有相似度拒答、Query 改写和生成侧评估。Memory V1 是本地 JSON + 词法过滤，没有自动摘要、语义召回、加密、认证和并发控制。Agent 还没有完整 tracing、成本监控、Web UI、权限系统与部署。当前定位是可运行、可解释、可评估的工程学习项目，不是生产平台。
+RAG 语料和黄金集仍小，只支持 Markdown/TXT；虽然已有 Hybrid 和可选 Rerank，但没有相似度拒答、Query 改写和生成侧 Judge。Memory V1 是本地 JSON + 词法过滤，没有自动摘要、语义召回、加密、认证和并发控制。Agent Eval 只有 4 条 Case，Trace 只是本地脱敏 JSONL，还没有 token/成本、集中监控、Web UI、权限系统与部署。当前定位是可运行、可解释、可评估的工程学习项目，不是生产平台。
 
 ### 40. 如何证明 RAG 不是孤立的演示脚本，而是真正接入了 Agent？
 
@@ -252,9 +252,39 @@ Dense Embedding 擅长语义近似，但字段名、EPSG 编号和专业术语�
 
 首先用自动化测试覆盖 Store、相关召回、Prompt 注入和 CLI 生命周期；然后在临时 namespace 写入“专业方向是 GIS”和“回答时说明关键步骤目的”，禁用 RAG 索引并要求不调用工具。真实 DeepSeek 正确复述两项内容，证明链路是 `Memory Store → Query 过滤 → Prompt 0.8.0 → LLM`，不是从知识库或 GIS 工具得到。
 
-## 九、简历描述草案
+## 九、Agent Eval 与可观测性
 
-实现自然语言驱动的 GeoPilot GIS Agent：设计 Provider-neutral LLM 适配、Pydantic Function Calling、结构化规划与人工审批，使用确定性 GeoPandas Workflow 完成 13 步覆盖分析并支持失败检查点恢复；构建本地引用型 RAG，采用 BGE 中文 Embedding、token 截断护栏及 BM25 + Dense + RRF，在 20 条困难 Query 上取得 Recall@3/MRR/NDCG@3 0.975/0.975/0.9521，并通过实验否决默认启用高延迟 Rerank；实现用户确认型长期记忆，支持 namespace、revision、过期、删除、相关上下文注入和关闭开关，并完成真实 DeepSeek 跨调用验证。
+### 58. GeoPilot 如何评估完整 Agent？
+
+每条 `AgentEvaluationCase` 同时声明结果、过程和安全期望：任务应正常完成还是正确失败，必须/禁止调用哪些工具，答案必须包含哪些稳定事实，预期哪些工具错误，以及轮数和调用数预算。评测器运行真实 `AgentRunner` 后计算 Task Success、Required Tool Recall、Tool Success、Error Recovery、Forbidden Violation、Exact Duplicate、Step Efficiency、平均轮数/调用数和延迟。它不是只匹配最终一句回答，也不是只检查工具是否曾出现。
+
+### 59. 什么是 Correct Failure，为什么它很重要？
+
+Agent 遇到缺失文件、权限不足或不合法输入时，正确行为不是“想办法给出结果”，而是调用合适工具、识别明确错误并停止，不编造或换用其他数据。GeoPilot 的缺失文件 Case 预期 `inspect_dataset` 返回 `tool_execution_error`，最终回答保留缺失文件名且不调用 CRS/计划工具；真实 DeepSeek 通过，Error Recovery 为 1.0。
+
+### 60. 为什么真实 Task Success 只有 75%，是否项目失败？
+
+不是。4 个 V1 Case 中三个通过；失败的 RAG Case 使用了正确工具、答案也包含 EPSG:4326，但调用两次 `search_knowledge`，超过金标准的一次调用预算，所以步骤效率 0.5 并判失败。这正说明评测能发现“答案对但过程冗余”的问题。项目保留该结果，后续应优化 Prompt 或检索决策，再用相同 Case 回归，不能事后放宽标准制造满分。
+
+### 61. Tool Call Success 0.8333 是否代表 16.67% 的任务失败？
+
+不能这样解释。真实 4-Case 一共有 6 次工具调用，其中 1 次失败是缺失文件 Case 故意要求的正确工具失败。工具调用成功率衡量函数执行，不直接等于任务成功率；它必须和 Expected Outcome、Correct Failure、Error Recovery 一起看。这也是为什么聚合指标不能脱离 Case 语义单独汇报。
+
+### 62. 如何定义重复工具调用？
+
+V1 的 Exact Duplicate 只比较“工具名 + JSON 排序后的完整参数”，因此同工具同参数重复才计数。RAG Case 的两次 Query 不同，所以 Exact Duplicate 为 0，但总调用数超过预算，Step Efficiency 降到 0.5。这个设计区分机械循环和可能有意的重试；语义上是否必要仍需 Case 预算或 Trace 人审，未来可增加 Query 相似度判定。
+
+### 63. Trace 保存什么，如何避免泄露？
+
+默认 JSONL Trace 只保存 Prompt SHA-256、provider/model、终态、耗时、轮数、工具名/成功状态/错误码、答案字符数和顶层错误码。它不保存 API Key、原 Prompt、工具参数、工具输出、Tool Call ID 和完整回答；自动化测试会在序列化字符串中检查敏感样例不存在。`--no-trace` 可以熔断，Trace 写失败只警告，不改变用户任务结果。
+
+### 64. 为什么规则评测不能替代 LLM-as-Judge 或人工评测？
+
+规则适合稳定检查工具、错误码、预算、必需事实和禁用行为，成本低且可重复；但 `required_answer_contains` 无法判断完整答案是否忠实、相关、引用正确或表达清楚。LLM Judge 能覆盖语义但可能受模型偏差、Prompt 和自评泄漏影响；人工评测更可信但昂贵。GeoPilot 当前只完成规则 Eval V1，下一步会为生成质量建立独立标注和 Judge，不把 75% 过程分数包装成答案质量分数。
+
+## 十、简历描述草案
+
+实现自然语言驱动的 GeoPilot GIS Agent：设计 Provider-neutral LLM 适配、Pydantic Function Calling、结构化规划与人工审批，使用确定性 GeoPandas Workflow 完成 13 步覆盖分析并支持失败检查点恢复；构建本地引用型 RAG，采用 BGE 中文 Embedding、token 截断护栏及 BM25 + Dense + RRF，在 20 条困难 Query 上取得 Recall@3/MRR/NDCG@3 0.975/0.975/0.9521，并通过实验否决默认启用高延迟 Rerank；实现用户确认型长期记忆与脱敏 Trace；建立结果/过程/安全三维 Agent 回归集，真实 DeepSeek V1 的 Task Success/Required Tool Recall/Error Recovery 为 0.75/1.0/1.0，并保留冗余检索失败案例。
 
 ## 迭代记录
 
@@ -302,3 +332,10 @@ Dense Embedding 擅长语义近似，但字段名、EPSG 编号和专业术语�
 - 回答基于 `src/geopilot/memory/`、Prompt 0.8.0、CLI 生命周期测试和真实 DeepSeek 读取验证。
 - 全项目 162 项测试、Ruff、格式和 Pyright 均通过。
 - 简历草案只描述用户确认型结构化记忆，不声称已有自动摘要、向量记忆或生产多租户安全。
+
+### 2026-08-28：Agent Eval 与脱敏 Trace V1
+
+- 新增完整 Agent 结果/过程/安全评测、Correct Failure、聚合指标解释、重复调用定义、Trace 脱敏和规则/Judge 边界共 7 道项目化面试题。
+- 回答基于 `src/geopilot/evaluation/`、`src/geopilot/observability/`、4 条版本化 Case、176 项自动化测试和真实 DeepSeek 实验。
+- 如实记录 0.75 Task Success：RAG Case 因二次检索超过预算失败；不把 Required Tool Recall 1.0 或正确答案单独包装成全通过。
+- 简历草案加入 Eval 与 Trace 的实际指标，同时明确 4 条 Case 只是 V1，不声称生产可靠性或完整生成质量评测。
