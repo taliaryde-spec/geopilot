@@ -26,6 +26,14 @@ from geopilot.execution import (
     RunStore,
     RunStoreError,
 )
+from geopilot.memory import (
+    DEFAULT_MEMORY_PATH,
+    MemoryContextBuilder,
+    MemoryKind,
+    MemoryStore,
+    MemoryStoreError,
+    MemoryWriteRequest,
+)
 from geopilot.planning.store import PlanStore, PlanStoreError
 from geopilot.rag import (
     DEFAULT_CHUNK_OVERLAP,
@@ -67,6 +75,7 @@ EXIT_AGENT_ERROR = 8
 EXIT_PLAN_ERROR = 9
 EXIT_EXECUTION_ERROR = 10
 EXIT_RAG_ERROR = 11
+EXIT_MEMORY_ERROR = 12
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -147,6 +156,22 @@ def build_parser() -> argparse.ArgumentParser:
             "Override GEOPILOT_MODEL_MAX_OUTPUT_TOKENS for this run (default: 4096)."
         ),
     )
+    agent_parser.add_argument(
+        "--memory-path",
+        type=Path,
+        default=DEFAULT_MEMORY_PATH,
+        help="Local long-term memory JSON file.",
+    )
+    agent_parser.add_argument(
+        "--memory-namespace",
+        default="default",
+        help="Isolated memory namespace used by this Agent run.",
+    )
+    agent_parser.add_argument(
+        "--no-memory",
+        action="store_true",
+        help="Disable long-term memory recall for this Agent run.",
+    )
 
     show_plan_parser = subparsers.add_parser(
         "show-plan",
@@ -188,6 +213,47 @@ def build_parser() -> argparse.ArgumentParser:
     )
     show_run_parser.add_argument("run_id", help="Execution run identifier.")
     _add_runs_directory_argument(show_run_parser)
+
+    memory_set_parser = subparsers.add_parser(
+        "memory-set",
+        help="Create or update one explicitly confirmed long-term memory.",
+    )
+    memory_set_parser.add_argument("kind", type=MemoryKind, choices=list(MemoryKind))
+    memory_set_parser.add_argument("key", help="Stable snake_case memory key.")
+    memory_set_parser.add_argument(
+        "value", help="Confirmed value; never store secrets."
+    )
+    memory_set_parser.add_argument(
+        "--confirmed",
+        action="store_true",
+        help="Required acknowledgement that the user authorized this write.",
+    )
+    memory_set_parser.add_argument("--expires-in-days", type=int, default=None)
+    _add_memory_storage_arguments(memory_set_parser)
+
+    memory_list_parser = subparsers.add_parser(
+        "memory-list",
+        help="List active long-term memories in one namespace.",
+    )
+    memory_list_parser.add_argument("--kind", type=MemoryKind, choices=list(MemoryKind))
+    memory_list_parser.add_argument("--include-expired", action="store_true")
+    _add_memory_storage_arguments(memory_list_parser)
+
+    memory_recall_parser = subparsers.add_parser(
+        "memory-recall",
+        help="Preview memories selected for a task without calling an LLM.",
+    )
+    memory_recall_parser.add_argument("query", help="Current task used for filtering.")
+    memory_recall_parser.add_argument("--top-k", type=int, default=6)
+    memory_recall_parser.add_argument("--max-characters", type=int, default=2000)
+    _add_memory_storage_arguments(memory_recall_parser)
+
+    memory_delete_parser = subparsers.add_parser(
+        "memory-delete",
+        help="Delete exactly one long-term memory from its namespace.",
+    )
+    memory_delete_parser.add_argument("memory_id", help="Memory identifier to delete.")
+    _add_memory_storage_arguments(memory_delete_parser)
 
     resume_parser = subparsers.add_parser(
         "resume",
@@ -395,6 +461,16 @@ def _add_plans_directory_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_memory_storage_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add the shared memory file and namespace isolation options."""
+    parser.add_argument(
+        "--memory-path",
+        type=Path,
+        default=DEFAULT_MEMORY_PATH,
+    )
+    parser.add_argument("--namespace", default="default")
+
+
 def _add_runs_directory_argument(parser: argparse.ArgumentParser) -> None:
     """Add the shared execution-checkpoint directory option."""
     parser.add_argument(
@@ -514,6 +590,9 @@ def _run_agent(
     max_output_tokens: int | None,
     knowledge_index: Path,
     model_cache: Path,
+    memory_path: Path,
+    memory_namespace: str,
+    memory_enabled: bool,
 ) -> int:
     """Run the real-model Agent command and print its final answer."""
     try:
@@ -531,12 +610,19 @@ def _run_agent(
             if knowledge_index.is_file()
             else None
         )
+        memory_context = (
+            MemoryContextBuilder(MemoryStore(memory_path))
+            .recall(prompt, memory_namespace)
+            .context
+            if memory_enabled
+            else None
+        )
         runner = AgentRunner(
             build_model(settings),
             build_default_tool_registry(knowledge_retriever=knowledge_retriever),
             max_model_turns=max_turns,
         )
-        result = runner.run(prompt)
+        result = runner.run(prompt, memory_context=memory_context)
     except ModelConfigurationError as error:
         _print_error("model_configuration_error", str(error))
         return EXIT_CONFIGURATION_ERROR
@@ -552,11 +638,120 @@ def _run_agent(
     except (EmbeddingError, VectorStoreError) as error:
         _print_error(error.code.value, str(error))
         return EXIT_RAG_ERROR
+    except MemoryStoreError as error:
+        _print_error(error.code.value, str(error))
+        return EXIT_MEMORY_ERROR
     except ValueError as error:
         _print_error("invalid_agent_input", str(error))
         return EXIT_INPUT_ERROR
 
     print(result.final_answer)
+    return EXIT_SUCCESS
+
+
+def _run_memory_set(
+    kind: MemoryKind,
+    key: str,
+    value: str,
+    *,
+    memory_path: Path,
+    namespace: str,
+    confirmed: bool,
+    expires_in_days: int | None,
+) -> int:
+    """Persist one user-confirmed memory and print its auditable metadata."""
+    try:
+        entry = MemoryStore(memory_path).upsert(
+            MemoryWriteRequest(
+                namespace=namespace,
+                kind=kind,
+                key=key,
+                value=value,
+                confirmed=confirmed,
+                expires_in_days=expires_in_days,
+            )
+        )
+    except MemoryStoreError as error:
+        _print_error(error.code.value, str(error))
+        return EXIT_MEMORY_ERROR
+    except (OSError, ValueError) as error:
+        _print_error("invalid_memory_input", str(error))
+        return EXIT_MEMORY_ERROR
+    print(entry.model_dump_json(indent=2))
+    return EXIT_SUCCESS
+
+
+def _run_memory_list(
+    *,
+    memory_path: Path,
+    namespace: str,
+    kind: MemoryKind | None,
+    include_expired: bool,
+) -> int:
+    """List one namespace without exposing entries from another scope."""
+    try:
+        entries = MemoryStore(memory_path).list_entries(
+            namespace,
+            kind=kind,
+            include_expired=include_expired,
+        )
+    except MemoryStoreError as error:
+        _print_error(error.code.value, str(error))
+        return EXIT_MEMORY_ERROR
+    except OSError as error:
+        _print_error("memory_io_error", str(error))
+        return EXIT_MEMORY_ERROR
+    print(
+        json.dumps(
+            [entry.model_dump(mode="json") for entry in entries],
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return EXIT_SUCCESS
+
+
+def _run_memory_recall(
+    query: str,
+    *,
+    memory_path: Path,
+    namespace: str,
+    top_k: int,
+    max_characters: int,
+) -> int:
+    """Preview deterministic memory selection and bounded prompt context."""
+    try:
+        result = MemoryContextBuilder(
+            MemoryStore(memory_path),
+            top_k=top_k,
+            max_characters=max_characters,
+        ).recall(query, namespace)
+    except MemoryStoreError as error:
+        _print_error(error.code.value, str(error))
+        return EXIT_MEMORY_ERROR
+    except (OSError, ValueError) as error:
+        _print_error("invalid_memory_input", str(error))
+        return EXIT_MEMORY_ERROR
+    print(result.model_dump_json(indent=2))
+    return EXIT_SUCCESS
+
+
+def _run_memory_delete(
+    memory_id: str,
+    *,
+    memory_path: Path,
+    namespace: str,
+) -> int:
+    """Delete one exact memory entry and return what was removed."""
+    try:
+        entry = MemoryStore(memory_path).delete(namespace, memory_id)
+    except MemoryStoreError as error:
+        _print_error(error.code.value, str(error))
+        return EXIT_MEMORY_ERROR
+    except OSError as error:
+        _print_error("memory_io_error", str(error))
+        return EXIT_MEMORY_ERROR
+    print(entry.model_dump_json(indent=2))
     return EXIT_SUCCESS
 
 
@@ -896,6 +1091,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_output_tokens=arguments.max_output_tokens,
             knowledge_index=arguments.knowledge_index,
             model_cache=arguments.model_cache,
+            memory_path=arguments.memory_path,
+            memory_namespace=arguments.memory_namespace,
+            memory_enabled=not arguments.no_memory,
         )
     if arguments.command == "show-plan":
         return _run_show_plan(arguments.plan_id, arguments.plans_dir)
@@ -915,6 +1113,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     if arguments.command == "show-run":
         return _run_show_run(arguments.run_id, arguments.runs_dir)
+    if arguments.command == "memory-set":
+        return _run_memory_set(
+            arguments.kind,
+            arguments.key,
+            arguments.value,
+            memory_path=arguments.memory_path,
+            namespace=arguments.namespace,
+            confirmed=arguments.confirmed,
+            expires_in_days=arguments.expires_in_days,
+        )
+    if arguments.command == "memory-list":
+        return _run_memory_list(
+            memory_path=arguments.memory_path,
+            namespace=arguments.namespace,
+            kind=arguments.kind,
+            include_expired=arguments.include_expired,
+        )
+    if arguments.command == "memory-recall":
+        return _run_memory_recall(
+            arguments.query,
+            memory_path=arguments.memory_path,
+            namespace=arguments.namespace,
+            top_k=arguments.top_k,
+            max_characters=arguments.max_characters,
+        )
+    if arguments.command == "memory-delete":
+        return _run_memory_delete(
+            arguments.memory_id,
+            memory_path=arguments.memory_path,
+            namespace=arguments.namespace,
+        )
     if arguments.command == "resume":
         return _run_resume(
             arguments.run_id,

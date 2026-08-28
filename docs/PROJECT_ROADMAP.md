@@ -37,7 +37,7 @@ Evaluation / Tracing / Storage / Deployment / MCP
 | 6 | GIS 执行工具 | 已完成 | CRS、重投影、面积、缓冲、合并、求交、覆盖指标、恢复、连接、验证、导出与报告 |
 | 7 | Approved Plan Executor | 已完成 | 稳定产物 ID、严格参数契约、依赖编译、运行存储、工具调度、失败停止、检查点恢复与 CLI |
 | 8 | RAG 与 Embedding | 检索侧阶段完成 | 已完成结构感知切块、token 超限护栏、FastEmbed、BM25、RRF、20 条困难集、可选 Cross-Encoder 与控制变量实验；Rerank 实测无收益故默认关闭，生成侧评估并入阶段 10 |
-| 9 | Memory | 待开始 | 会话状态、任务检查点、用户偏好、长期记忆边界 |
+| 9 | Memory | 安全第一版完成 | 已区分 Working Memory、Session State、Long-term Memory 与 RAG；实现用户确认写入、namespace、revision、过期、删除、相关召回、Prompt 边界与关闭开关 |
 | 10 | Eval 与可观测性 | 待开始 | 测试集、工具成功率、幻觉率、Tracing、日志、成本 |
 | 11 | 产品与部署 | 待开始 | FastAPI、Web UI、数据库、Docker、CI/CD、安全 |
 | 12 | MCP | 待开始 | 将稳定 GIS 工具发布为可复用 MCP Server |

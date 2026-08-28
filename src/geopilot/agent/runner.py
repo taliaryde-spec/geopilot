@@ -50,13 +50,23 @@ class AgentRunner:
         self._system_prompt = system_prompt
         self._max_model_turns = max_model_turns
 
-    def run(self, user_input: str) -> AgentRunResult:
+    def run(
+        self,
+        user_input: str,
+        *,
+        memory_context: str | None = None,
+    ) -> AgentRunResult:
         """Execute one user task with in-run working memory."""
         if not user_input.strip():
             raise ValueError("user_input must not be empty")
+        selected_system_prompt = self._system_prompt
+        if memory_context is not None and memory_context.strip():
+            selected_system_prompt = (
+                f"{self._system_prompt}\n\n{memory_context.strip()}"
+            )
 
         messages = [
-            AgentMessage(role="system", content=self._system_prompt),
+            AgentMessage(role="system", content=selected_system_prompt),
             AgentMessage(role="user", content=user_input),
         ]
         tool_results: list[ToolResult] = []

@@ -2,7 +2,7 @@
 
 GeoPilot 是一个自然语言驱动的地理空间分析 Agent。用户提供空间数据和分析问题，Agent 将检查数据、规划分析步骤、调用 GIS 工具、验证结果，并生成地图与报告。
 
-> 当前项目处于 v0.1 开发阶段。本仓库已经跑通自然语言规划、人工审批、确定性 GIS 执行、结果验证与报告，并加入了带引用的本地 RAG、中文 Embedding 和离线检索评估。
+> 当前项目处于 v0.1 开发阶段。本仓库已经跑通自然语言规划、人工审批、确定性 GIS 执行、结果验证与报告，并加入了带引用的本地 RAG、中文 Embedding、离线检索评估和用户确认型长期记忆。
 
 ## 演示场景
 
@@ -25,6 +25,7 @@ GeoPilot 是一个自然语言驱动的地理空间分析 Agent。用户提供�
 - 已批准计划的依赖编译、确定性执行、失败停止与检查点恢复
 - Markdown/TXT 知识加载、层级切块、本地中文 Embedding、Hybrid Search、可选 Cross-Encoder 与来源引用
 - RAG 的章节级 Precision/Recall/MRR/NDCG 离线评估及 Agent `search_knowledge` 工具
+- 用户确认的长期偏好/目标/项目背景，支持 namespace、revision、过期、删除和按 Query 注入
 - Ruff、Pyright 和 Pytest 质量检查
 
 完整组件规划与各阶段验收标准见 [GeoPilot 项目路线图](docs/PROJECT_ROADMAP.md)。
@@ -211,7 +212,33 @@ uv run geopilot show-run <run_id>
 uv run geopilot resume <run_id>
 ```
 
-完整 Agent 组件、实际方法和迭代证据见 [Agent 组件与工程实现记录](docs/AGENT_COMPONENTS.md)，对应的面试追问与项目化回答见 [Agent 面试问题与项目化回答](docs/AGENT_INTERVIEW_QA.md)。以后每次 Agent 相关推进都会同步追加这两份主文档。第一条“问题 → 规划 → 审批 → 执行 → 报告”闭环和本地 RAG 已经具备；跨会话长期记忆、完整 Agent 评测、Web UI 和 MCP 仍按路线图分阶段实现。
+完整 Agent 组件、实际方法和迭代证据见 [Agent 组件与工程实现记录](docs/AGENT_COMPONENTS.md)，对应的面试追问与项目化回答见 [Agent 面试问题与项目化回答](docs/AGENT_INTERVIEW_QA.md)。以后每次 Agent 相关推进都会同步追加这两份主文档。第一条“问题 → 规划 → 审批 → 执行 → 报告”闭环、本地 RAG 和长期记忆 V1 已经具备；完整 Agent 评测、Web UI 和 MCP 仍按路线图分阶段实现。
+
+## 长期记忆
+
+GeoPilot 将单次对话消息、Plan/Run 任务状态、长期用户信息和 RAG 外部知识分开管理。长期记忆不会自动保存聊天；V1 只允许用户明确确认的回答偏好、长期目标和项目背景。
+
+写入一条确认过的偏好：
+
+```powershell
+uv run geopilot memory-set response_preference learning_style "回答时说明每一步操作的目的" --confirmed --namespace default
+```
+
+写入可过期的项目背景：
+
+```powershell
+uv run geopilot memory-set project_context academic_major "我的专业方向是地理信息系统（GIS）" --confirmed --expires-in-days 365 --namespace default
+```
+
+列出、预览当前任务会召回的条目，以及删除：
+
+```powershell
+uv run geopilot memory-list --namespace default
+uv run geopilot memory-recall "继续完善 GIS Agent 项目" --namespace default
+uv run geopilot memory-delete <memory_id> --namespace default
+```
+
+普通 `agent` 命令默认从 `artifacts/memory/profile.json` 读取 namespace `default`。可用 `--memory-namespace` 切换隔离范围，或用 `--no-memory` 完全关闭读取。Memory 值只用于个性化，不能覆盖工具事实、人工审批、System Prompt 或当前用户输入。完整设计与真实 DeepSeek 验证见 [Long-term Memory V1](docs/evaluations/MEMORY_V1.md)。
 
 ## 本地 RAG 与 Embedding
 
@@ -292,6 +319,7 @@ uv run geopilot rag-rerank-experiment knowledge/retrieval_cases.json --top-k 3 -
 - `9`：计划不存在、状态转换冲突或计划文件无效
 - `10`：计划编译、执行检查点或 GIS 工具执行失败
 - `11`：知识加载、Embedding、向量索引、检索或 RAG 评估失败
+- `12`：长期记忆确认、策略、存储、召回或删除失败
 
 PowerShell 可以通过 `$LASTEXITCODE` 查看退出码；Windows CMD 可以运行 `echo %ERRORLEVEL%`。
 
@@ -311,6 +339,7 @@ src/geopilot/
 ├── agent/                 # Prompt、模型接口、工具注册表与 Agent Loop
 ├── cli.py                 # 命令行适配层
 ├── execution/             # 已批准计划编译、工具调度、运行检查点与恢复
+├── memory/                # 用户确认型长期记忆、原子存储与相关上下文筛选
 ├── models.py              # Pydantic 数据契约
 ├── rag/                   # 文档加载、切块、Embedding、向量索引、检索与评估
 ├── tools/                 # 可独立测试的确定性 GIS 工具
@@ -342,6 +371,7 @@ uv run pytest -q
 - [x] 执行米制投影、缓冲区和空间连接
 - [x] 验证分析结果并输出 GeoJSON 与 Markdown 报告
 - [x] 本地 RAG、中文 Embedding、引用和章节级检索评估
+- [x] 用户确认型长期记忆、作用域、过期、删除和 Agent 注入
 - [ ] 提供可交互的 Web 界面
 
 ## v0.1 验收标准

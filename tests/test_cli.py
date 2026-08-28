@@ -17,6 +17,7 @@ from geopilot.cli import (
     EXIT_EXECUTION_ERROR,
     EXIT_FILE_NOT_FOUND,
     EXIT_INPUT_ERROR,
+    EXIT_MEMORY_ERROR,
     EXIT_PLAN_ERROR,
     EXIT_RAG_ERROR,
     EXIT_SUCCESS,
@@ -74,6 +75,71 @@ def test_main_without_command_prints_help(
     assert "rag-chunk-experiment" in captured.out
     assert "rag-retrieval-experiment" in captured.out
     assert "rag-rerank-experiment" in captured.out
+    assert "memory-set" in captured.out
+    assert "memory-list" in captured.out
+    assert "memory-recall" in captured.out
+    assert "memory-delete" in captured.out
+
+
+def test_memory_cli_requires_confirmation_and_supports_full_lifecycle(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    memory_path = tmp_path / "memory.json"
+    base = ["--memory-path", str(memory_path), "--namespace", "student"]
+
+    rejected = main(
+        [
+            "memory-set",
+            "project_context",
+            "major",
+            "地理信息系统",
+            *base,
+        ]
+    )
+    rejected_payload = json.loads(capsys.readouterr().err)
+
+    assert rejected == EXIT_MEMORY_ERROR
+    assert rejected_payload["error"]["code"] == "memory_confirmation_required"
+    assert not memory_path.exists()
+
+    created = main(
+        [
+            "memory-set",
+            "project_context",
+            "major",
+            "地理信息系统",
+            "--confirmed",
+            *base,
+        ]
+    )
+    created_payload = json.loads(capsys.readouterr().out)
+    memory_id = created_payload["memory_id"]
+
+    assert created == EXIT_SUCCESS
+    assert created_payload["source"] == "user_confirmed"
+
+    listed = main(["memory-list", *base])
+    listed_payload = json.loads(capsys.readouterr().out)
+
+    assert listed == EXIT_SUCCESS
+    assert [entry["memory_id"] for entry in listed_payload] == [memory_id]
+
+    recalled = main(["memory-recall", "我的地理信息系统专业", *base])
+    recalled_payload = json.loads(capsys.readouterr().out)
+
+    assert recalled == EXIT_SUCCESS
+    assert recalled_payload["entries"][0]["memory_id"] == memory_id
+    assert "地理信息系统" in recalled_payload["context"]
+
+    deleted = main(["memory-delete", memory_id, *base])
+    deleted_payload = json.loads(capsys.readouterr().out)
+
+    assert deleted == EXIT_SUCCESS
+    assert deleted_payload["memory_id"] == memory_id
+
+    main(["memory-list", *base])
+    assert json.loads(capsys.readouterr().out) == []
 
 
 def test_chunk_experiment_parser_validates_repeatable_variants() -> None:
@@ -204,6 +270,38 @@ def test_main_runs_agent_without_network(
     assert exit_code == EXIT_SUCCESS
     assert captured_max_tokens == [5000]
     assert captured.out == "Agent 已返回测试答案。\n"
+    assert captured.err == ""
+
+
+def test_agent_no_memory_bypasses_an_invalid_memory_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class FakeModel:
+        def complete(self, messages: object, tools: object) -> ModelResponse:
+            return ModelResponse(content="Memory 已关闭，Agent 正常运行。")
+
+    memory_path = tmp_path / "invalid-memory.json"
+    memory_path.write_text("not-json", encoding="utf-8")
+    monkeypatch.setenv("GEOPILOT_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("GEOPILOT_MODEL", "test-model")
+    monkeypatch.setattr(cli_module, "build_model", lambda settings: FakeModel())
+
+    exit_code = main(
+        [
+            "agent",
+            "继续任务",
+            "--memory-path",
+            str(memory_path),
+            "--no-memory",
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == EXIT_SUCCESS
+    assert captured.out == "Memory 已关闭，Agent 正常运行。\n"
     assert captured.err == ""
 
 

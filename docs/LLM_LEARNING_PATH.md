@@ -27,7 +27,7 @@ GeoPilot 后续大模型部分以[卡码大模型学习路线](https://notes.kam
 | RAG 优化 | 混合检索与 Rerank 已评估；Rerank 无收益故默认关闭 | 当前阶段完成 | 20 Query、24 标签的控制变量实验 |
 | RAG 评估 | Precision、Recall、MRR、NDCG | 检索侧完成 | `docs/evaluations/RAG_RERANK_V1.md` |
 | Agent 设计 | LLM 决策 + 确定性 Workflow + 人工审批 | 核心闭环完成 | 任务成功率、死循环与权限边界评估 |
-| Memory | 工作记忆、任务记忆、长期偏好 | 待开始 | 写入策略、遗忘、隐私和检索评估 |
+| Memory | 工作记忆、任务状态、长期偏好/目标/背景 | 安全第一版完成 | 用户确认、namespace、revision、过期、删除、词法召回和 Prompt 边界 |
 | MCP | 对外发布稳定 GIS 工具 | 待开始 | MCP Server、外部客户端调用测试 |
 | 部署与工程化 | API、Web GIS、容器、CI/CD、监控 | 待开始 | 延迟、吞吐、成本、可用性和安全指标 |
 | Transformer 与微调 | 应用开发所需原理和选型边界 | 学习阶段待开展 | 原理笔记、选型题，不为了简历盲目训练模型 |
@@ -44,7 +44,7 @@ GeoPilot 后续大模型部分以[卡码大模型学习路线](https://notes.kam
 6. 已完成：扩充为 20 条困难 Query、24 个标签，以 12 个 Hybrid 候选对照 `BAAI/bge-reranker-base`；Rerank 的 Recall/NDCG 下降且 CPU 延迟显著增加，因此默认关闭。
 7. 后续 Eval 阶段：增加回答忠实度、答案相关性、引用正确率和拒答评估。
 
-下一阶段按完整 Agent 路线进入 Memory：先区分 Working Memory、可靠任务状态和长期用户偏好，再实现白名单写入、作用域、过期与删除，而不是把所有聊天内容直接向量化。
+Memory V1 已完成：区分 Working Memory、Plan/Run Session State、Long-term Memory 与 RAG；只允许用户确认的三类稳定信息，并实现作用域、更新、过期、删除、相关召回和 `--no-memory`。下一阶段进入 Agent Eval 与可观测性，量化任务完成率、工具选择准确率、步骤效率、错误恢复率、延迟和 token 成本。
 
 ## 主要参考
 
@@ -52,3 +52,5 @@ GeoPilot 后续大模型部分以[卡码大模型学习路线](https://notes.kam
 - [Embedding、模型选型与 Rerank 区别](https://notes.kamacoder.com/llm/app/embedding.html)
 - [四种 Chunking 策略对比](https://notes.kamacoder.com/llm/app/how_to_chunking.html)
 - [RAG 检索与生成评估体系](https://notes.kamacoder.com/llm/app/rag_evaluation.html)
+- [Agent 的短期记忆、Session State、长期记忆与 RAG](https://notes.kamacoder.com/llm/app/agent_memory.html)
+- [Agent 任务完成率、步骤效率与错误恢复评估](https://notes.kamacoder.com/llm/app/agent_evaluation.html)

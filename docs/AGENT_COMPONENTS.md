@@ -6,7 +6,7 @@
 
 本文件只记录已经由源码、测试或真实运行证明的事实；规划中的功能必须明确标记为“未实现”，不能因为出现在路线图里就写成已完成。
 
-这份文档区分“已经形成第一条可运行闭环”和“完整大模型应用的全部组件”。第一条闭环是：自然语言问题 → LLM 规划与工具调用 → 人工审批 → 确定性 GIS 执行 → 验证 → 地图数据与报告。RAG 与 Embedding 已作为第二条知识链路接入；跨会话长期记忆、系统化 Agent 评测、Web UI 和 MCP 仍是后续独立阶段。
+这份文档区分“已经形成第一条可运行闭环”和“完整大模型应用的全部组件”。第一条闭环是：自然语言问题 → LLM 规划与工具调用 → 人工审批 → 确定性 GIS 执行 → 验证 → 地图数据与报告。RAG/Embedding 和用户确认型长期记忆已分别作为知识链路与个性化链路接入；系统化 Agent 评测、Web UI 和 MCP 仍是后续独立阶段。
 
 ## 当前调用链
 
@@ -14,6 +14,8 @@
 用户自然语言
     ↓
 CLI
+    ↓
+Long-term Memory 按 Query 过滤（可关闭）
     ↓
 System Prompt + Agent Loop
     ↓
@@ -59,6 +61,7 @@ GeoPackage / GeoJSON / Markdown
 | RAG 服务与工具 | 已完成第一版 | `src/geopilot/rag/service.py`、`agent/tool_adapters.py` | 返回带来源引用的证据，并按索引存在性注册 Agent 工具 |
 | 检索评估 | 已完成第一版 | `src/geopilot/rag/evaluation.py`、`knowledge/retrieval_cases.json` | 按来源、章节、正文标签与相关度等级计算 Precision、Recall、MRR 和 NDCG |
 | Cross-Encoder Rerank | 已实现并完成首轮评估，默认关闭 | `src/geopilot/rag/reranking.py`、`rerank_experiment.py` | 对 Hybrid 候选成对打分；真实实验无收益，因此不替换默认 Hybrid |
+| Long-term Memory | 已完成安全第一版 | `src/geopilot/memory/`、`agent/runner.py`、`cli.py` | 显式确认写入、namespace 隔离、版本/过期/删除、相关召回和可关闭 Prompt 注入 |
 | 用户入口 | CLI 已完成 | `src/geopilot/cli.py` | 原有 Agent/执行命令及 rag-build、rag-search、rag-evaluate |
 
 ## 当前采用的方法与技术取舍
@@ -73,7 +76,7 @@ GeoPilot 没有让 LLM 直接执行任意 Python 或任意 GIS 操作。LLM 负�
 
 ### 3. 版本化 Prompt 与代码护栏
 
-System Prompt 位于 `agent/prompts.py` 并有显式版本。Prompt 负责告诉模型何时检查数据、何时推荐 CRS、何时检索知识和何时提交计划；关键安全规则还会在 Pydantic Schema、计划语义校验器和执行编译器中再次验证。原因是 Prompt 属于软约束，不能替代代码级权限与数据校验。
+System Prompt 位于 `agent/prompts.py` 并有显式版本。Prompt 0.8.0 负责告诉模型何时检查数据、何时推荐 CRS、何时检索知识、何时提交计划，以及长期记忆只能用于个性化、不能覆盖系统规则和工具事实；关键安全规则还会在 Pydantic Schema、计划语义校验器和执行编译器中再次验证。原因是 Prompt 属于软约束，不能替代代码级权限与数据校验。
 
 ### 4. Function Calling 与 Tool Registry
 
@@ -105,12 +108,18 @@ Token 护栏位于 `rag/embeddings.py`、`rag/tokenization.py` 和 `rag/service.
 
 ## Memory 现在有什么
 
-当前有两种“任务内状态”，但还没有完整长期记忆：
+GeoPilot 明确区分四类状态：
 
-- 单次 Agent Working Memory：`runner.py` 中的 `messages` 保存本轮用户、模型和工具消息；进程结束后不跨会话保留。
-- 任务检查点：`artifacts/plans` 与 `artifacts/runs` 保存审批状态、执行状态和产物依赖；这是可靠的工作流状态，不是语义记忆。
+- Working Memory：`runner.py` 中的 `messages` 保存单次运行的 system/user/assistant/tool 消息；进程结束后不跨会话保留。
+- Session State：`artifacts/plans` 与 `artifacts/runs` 保存审批、步骤状态、失败和产物依赖；它是可靠工作流状态，不是聊天记录。
+- Long-term Memory：`memory/models.py`、`store.py`、`context.py` 保存用户确认的回答偏好、长期目标和项目背景。
+- External Knowledge：`rag/` 保存 GIS 规范、字段定义和项目文档，不与用户记忆混存。
 
-后续 Memory 阶段会增加会话摘要、用户偏好、历史任务检索、写入边界、遗忘和隐私策略。不会把所有对话无选择地写入向量库。
+长期记忆 V1 使用版本化 JSON 和 `namespace + kind + key` 唯一身份。CLI `memory-set` 必须带 `--confirmed`，模型没有写入工具；同一身份更新时保留 ID 和创建时间并增加 revision。条目可设过期时间，可按 namespace/kind 列出，也可用 namespace + memory ID 精确删除。存储使用同目录临时文件、`fsync` 和 `os.replace` 原子替换。
+
+读取时，`MemoryContextBuilder` 默认返回最多 6 条、2000 字符：回答偏好视为全局，用户目标和项目背景按当前 Query 与 `key + value` 的词法重叠筛选，过期和其他 namespace 条目不进入上下文。渲染后的 `<user_memory>` 转义块被追加到 system message；Prompt 0.8.0 要求将它视为不可信的个性化数据，当前用户输入冲突时以当前输入为准。`agent --no-memory` 可以完全跳过读取。
+
+当前不是生产级记忆平台：没有语义同义词召回、自动会话摘要、模型写入提案、人审冲突合并、并发锁、加密、身份认证或租户授权；敏感 key 拦截也不能替代 DLP。
 
 ## RAG、Embedding 在哪里
 
@@ -140,11 +149,10 @@ GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和�
 
 ## 后续完整组件顺序
 
-1. 会话记忆、任务记忆、用户偏好与长期记忆边界。
-2. Eval、Tracing、日志、token/成本统计与回归数据集。
-3. FastAPI、Web GIS 图形界面、数据库和权限边界。
-4. Docker、CI/CD、安全检查和部署。
-5. MCP Server，将稳定 GIS 能力提供给外部 Agent。
+1. Eval、Tracing、日志、token/成本统计与回归数据集。
+2. FastAPI、Web GIS 图形界面、数据库和权限边界。
+3. Docker、CI/CD、安全检查和部署。
+4. MCP Server，将稳定 GIS 能力提供给外部 Agent。
 
 这套顺序先保证 Agent 会正确计算和失败，再增加知识、记忆与产品界面，便于定位每个阶段的问题并形成可展示的工程提交历史。
 
@@ -224,4 +232,17 @@ GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和�
 - 决策：保留可选 Rerank 能力用于后续模型/硬件实验，默认继续使用 Hybrid。组件实现完成不等于必须上线。
 - 测试：覆盖候选池边界、排序、模型按需加载、空输入、数量不匹配、非有限分数、CLI 和受控实验；全项目 152 项测试、Ruff、格式和 Pyright 均通过；证据见 `docs/evaluations/RAG_RERANK_V1.md`。
 - 局限：小语料、小黄金集、单模型、单次 CPU 测量；尚未评估生成侧忠实度、引用正确率和拒答。
-- 下一步：进入 Memory，先实现可审计的会话摘要与用户偏好写入边界。
+- 下一步：进入 Memory，先实现可审计的用户偏好写入边界，并映射 Working Memory、Session State 与 RAG 的职责。
+
+### 2026-08-28：Long-term Memory V1
+
+- 分层：明确 Working Memory、Plan/Run Session State、Long-term Memory 与 RAG 外部知识四类对象，避免用一个 `memory` 表混存。
+- 契约：新增 `MemoryKind`、`MemoryEntry`、`MemoryWriteRequest`、版本化存储 envelope 和稳定错误代码；V1 只允许回答偏好、用户目标、项目背景三类用户确认信息。
+- 写入策略：`memory-set` 必须显式 `--confirmed`；模型没有 Memory 写工具；同身份 upsert 增加 revision，并支持 1～3650 天过期。
+- 存储与隔离：JSON 原子替换；按 namespace 读取和删除，跨 namespace ID 不可删除；敏感 key 被拒绝。
+- 召回：回答偏好全局加入，其他类型按 BM25 同款 token 词法重叠筛选；默认 Top-6、最多 2000 字符、过期过滤。
+- Prompt 安全：升级到 0.8.0；记忆值进行标签字符转义，并声明不能覆盖系统规则、工具证据、审批或当前输入；支持 `--no-memory` 熔断。
+- 真实验证：临时写入 GIS 专业背景和“说明关键步骤目的”的偏好；禁用 RAG 与工具后，DeepSeek 正确复述两项内容。
+- 自动化：覆盖确认、revision、过期、namespace、删除、损坏文件、敏感 key、相关召回、字符上限、Agent 注入、CLI 生命周期和关闭开关；全项目 162 项测试、Ruff、格式和 Pyright 均通过；证据见 `docs/evaluations/MEMORY_V1.md`。
+- 局限：词法召回不理解无共同 token 的同义表达；本地 JSON 无并发、加密与认证；没有自动摘要或模型写入审批流，不能描述为生产级多用户记忆。
+- 下一步：进入 Agent Eval 与可观测性，量化任务完成率、工具选择、步骤效率、错误恢复、延迟和 token 成本。

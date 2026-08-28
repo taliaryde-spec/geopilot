@@ -166,11 +166,11 @@ Embedding 把 Query 和文档分别编码，文档向量可离线预计算，适
 
 字符数实现简单、与中英文标点边界容易组合，但字符数和模型 tokenizer 产生的 token 数不是固定比例，尤其中文、英文、数字和专业符号混合时差异明显。GeoPilot 仍使用字符和自然边界生成 Chunk，但在 Embedding 前对最终 `title + section + text` 使用同一 BGE tokenizer 做未截断计数；正式建库会拒绝超限片段。
 
-## 八、尚未实现组件的边界题
+## 八、Memory 与尚未实现组件的边界题
 
 ### 37. Memory 和 RAG 有什么区别？
 
-RAG 检索外部或项目知识；Memory 保存 Agent 与用户、历史任务相关的状态。GeoPilot 当前有单次 Working Memory 和计划/运行检查点，但没有跨会话语义记忆。长期记忆必须设计写入白名单、用户隔离、过期、删除和隐私规则，不能把全部对话直接向量化。
+RAG 检索 GIS 规范、字段定义等外部知识；Memory 保存用户偏好、长期目标和项目背景；PlanStore/RunStore 保存当前任务的可靠 Session State；Agent messages 是单次 Working Memory。GeoPilot 已实现结构化长期记忆 V1，但没有把聊天历史向量化：用户通过 CLI 明确确认写入，读取时按 namespace、过期和当前 Query 过滤，再以受限上下文注入。
 
 ### 38. MCP 和 Function Calling 有什么区别？
 
@@ -178,7 +178,7 @@ Function Calling 是模型输出结构化工具请求的机制；MCP 是客户�
 
 ### 39. 当前系统最大的不足是什么？
 
-RAG 语料和黄金集仍小，只支持 Markdown/TXT；虽然已有 Hybrid 和可选 Rerank，但没有相似度拒答、Query 改写和生成侧评估。Agent 还没有跨会话长期记忆、完整 tracing、成本监控、Web UI、权限系统与部署。当前定位是可运行、可解释、可评估的工程学习项目，不是生产平台。
+RAG 语料和黄金集仍小，只支持 Markdown/TXT；虽然已有 Hybrid 和可选 Rerank，但没有相似度拒答、Query 改写和生成侧评估。Memory V1 是本地 JSON + 词法过滤，没有自动摘要、语义召回、加密、认证和并发控制。Agent 还没有完整 tracing、成本监控、Web UI、权限系统与部署。当前定位是可运行、可解释、可评估的工程学习项目，不是生产平台。
 
 ### 40. 如何证明 RAG 不是孤立的演示脚本，而是真正接入了 Agent？
 
@@ -228,9 +228,33 @@ Dense Embedding 擅长语义近似，但字段名、EPSG 编号和专业术语�
 
 工程能力与产品决策要分开。真实预热实验中 Hybrid 约 230.68ms，Rerank 约 67.69s，同时质量没有提升；模型缓存约 1.052GiB。GeoPilot 因此保留 `hybrid_rerank` 模式供后续模型、硬件和批处理实验，但默认继续使用 Hybrid，并通过延迟加载避免普通 Agent 启动承担大模型成本。
 
+### 52. GeoPilot 的 Memory 为什么不直接保存全部聊天记录？
+
+全部保存会带来上下文膨胀、噪音、过期事实和指令污染。GeoPilot 把原始对话限制在单次 Working Memory，任务状态放入 Plan/Run 检查点，只有稳定且以后有用的信息才能进入长期记忆。V1 只允许 `response_preference`、`user_goal` 和 `project_context`，并要求用户显式 `--confirmed`。
+
+### 53. 为什么不让 LLM 自动调用工具写长期记忆？
+
+模型可能把临时猜测、未确认意向或敏感信息误写成长期事实。V1 因此没有模型可见的 Memory 写工具，只提供用户操作的 CLI；写入记录来源为 `user_confirmed`。后续如果增加模型提议，也应该采用 `proposed → approved/rejected` 状态机，不能让模型直接提交最终记忆。
+
+### 54. 长期记忆如何更新、过期和删除？
+
+`namespace + kind + key` 是唯一身份。相同身份再次确认会保留 memory ID 和 created_at、更新 value/updated_at 并增加 revision；`expires_in_days` 支持 1～3650 天，到期后默认不召回但仍可审计；删除同时校验 namespace 与 memory ID，防止跨作用域误删。
+
+### 55. Memory 如何避免把所有条目塞进 Prompt？
+
+`MemoryContextBuilder` 默认最多选择 6 条、2000 字符。回答偏好天然适用于所有请求；用户目标和项目背景必须与当前 Query 的 `key + value` 有 BM25 同款 token 重叠。过期和其他 namespace 条目先被排除。当前方法透明、可测试，但不能理解没有共同 token 的跨语言同义表达。
+
+### 56. Memory 内容会不会形成 Prompt Injection？
+
+记忆仍是不可信用户数据。GeoPilot 将其放在独立 `<user_memory>` 块中，转义尖括号防止伪造结束标签，并在 Prompt 0.8.0 声明它不能覆盖系统规则、工具证据、人工审批和当前输入；当前输入冲突时以当前输入为准。这个设计降低风险但不是完整安全证明，生产环境还需要输入分类、审计和权限控制。
+
+### 57. 如何证明长期记忆真正接入了 Agent？
+
+首先用自动化测试覆盖 Store、相关召回、Prompt 注入和 CLI 生命周期；然后在临时 namespace 写入“专业方向是 GIS”和“回答时说明关键步骤目的”，禁用 RAG 索引并要求不调用工具。真实 DeepSeek 正确复述两项内容，证明链路是 `Memory Store → Query 过滤 → Prompt 0.8.0 → LLM`，不是从知识库或 GIS 工具得到。
+
 ## 九、简历描述草案
 
-实现自然语言驱动的 GeoPilot GIS Agent：设计 Provider-neutral LLM 适配、Pydantic Function Calling、结构化规划与人工审批，使用确定性 GeoPandas Workflow 完成 13 步覆盖分析并支持失败检查点恢复；构建本地引用型 RAG，采用结构感知切块、BGE 中文 Embedding、同 tokenizer 截断护栏及 BM25 + Dense + RRF 混合检索；构造 20 条 GIS 困难 Query、24 个相关标签并完成 Cross-Encoder 对照，默认 Hybrid 的 Recall@3/MRR/NDCG@3 为 0.975/0.975/0.9521，依据质量与约 293 倍单次 CPU 时延差拒绝默认启用 Rerank。
+实现自然语言驱动的 GeoPilot GIS Agent：设计 Provider-neutral LLM 适配、Pydantic Function Calling、结构化规划与人工审批，使用确定性 GeoPandas Workflow 完成 13 步覆盖分析并支持失败检查点恢复；构建本地引用型 RAG，采用 BGE 中文 Embedding、token 截断护栏及 BM25 + Dense + RRF，在 20 条困难 Query 上取得 Recall@3/MRR/NDCG@3 0.975/0.975/0.9521，并通过实验否决默认启用高延迟 Rerank；实现用户确认型长期记忆，支持 namespace、revision、过期、删除、相关上下文注入和关闭开关，并完成真实 DeepSeek 跨调用验证。
 
 ## 迭代记录
 
@@ -271,3 +295,10 @@ Dense Embedding 擅长语义近似，但字段名、EPSG 编号和专业术语�
 - 更新为 20 条 Query、24 个标签、4 条多正例的真实评测口径。
 - 新增 Cross-Encoder 实现、候选召回/最终排序诊断、Rerank 退化原因和默认上线决策问答。
 - 简历草案保留真实 Hybrid 指标，并把“实验否决昂贵组件”作为评测驱动工程证据，不包装成 Rerank 提升。
+
+### 2026-08-28：Long-term Memory V1
+
+- 新增短期消息、Session State、长期记忆和 RAG 四层边界，以及写入/更新/遗忘/Prompt 安全面试题。
+- 回答基于 `src/geopilot/memory/`、Prompt 0.8.0、CLI 生命周期测试和真实 DeepSeek 读取验证。
+- 全项目 162 项测试、Ruff、格式和 Pyright 均通过。
+- 简历草案只描述用户确认型结构化记忆，不声称已有自动摘要、向量记忆或生产多租户安全。
