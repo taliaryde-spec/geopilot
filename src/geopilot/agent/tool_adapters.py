@@ -1,7 +1,7 @@
 """Adapters that expose deterministic GeoPilot workflows as Agent tools."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -93,21 +93,45 @@ class SubmitAnalysisPlanArguments(BaseModel):
         return self
 
 
-def _inspect_dataset(arguments: BaseModel) -> BaseModel:
+class DatasetSourceResolver(Protocol):
+    """Resolve one model-provided dataset path under an entrypoint policy."""
+
+    def __call__(self, source: str) -> str | Path:
+        """Return an authorized source or raise a policy error."""
+        ...
+
+
+def _inspect_dataset(
+    arguments: BaseModel,
+    source_resolver: DatasetSourceResolver | None = None,
+) -> BaseModel:
     """Validate tool arguments and run the dataset intake workflow."""
     parameters = InspectDatasetArguments.model_validate(arguments)
+    source = (
+        source_resolver(parameters.source)
+        if source_resolver is not None
+        else parameters.source
+    )
     return inspect_and_validate_dataset(
-        parameters.source,
+        source,
         longitude_column=parameters.longitude_column,
         latitude_column=parameters.latitude_column,
     )
 
 
-def _recommend_metric_crs(arguments: BaseModel) -> BaseModel:
+def _recommend_metric_crs(
+    arguments: BaseModel,
+    source_resolver: DatasetSourceResolver | None = None,
+) -> BaseModel:
     """Validate tool arguments and determine a metric analysis CRS."""
     parameters = RecommendMetricCrsArguments.model_validate(arguments)
+    source = (
+        source_resolver(parameters.source)
+        if source_resolver is not None
+        else parameters.source
+    )
     return recommend_metric_crs(
-        parameters.source,
+        source,
         longitude_column=parameters.longitude_column,
         latitude_column=parameters.latitude_column,
     )
@@ -126,12 +150,19 @@ def build_default_tool_registry(
     *,
     plan_store: PlanStore | None = None,
     knowledge_retriever: KnowledgeRetriever | None = None,
+    source_resolver: DatasetSourceResolver | None = None,
 ) -> ToolRegistry:
     """Return the tools currently available to the GeoPilot Agent."""
     selected_plan_store = plan_store or PlanStore(Path("artifacts") / "plans")
 
     def submit_analysis_plan(arguments: BaseModel) -> BaseModel:
         return _submit_analysis_plan(arguments, selected_plan_store)
+
+    def inspect_dataset(arguments: BaseModel) -> BaseModel:
+        return _inspect_dataset(arguments, source_resolver)
+
+    def recommend_metric_crs(arguments: BaseModel) -> BaseModel:
+        return _recommend_metric_crs(arguments, source_resolver)
 
     registry = ToolRegistry()
     registry.register(
@@ -142,7 +173,7 @@ def build_default_tool_registry(
                 "Use this before making claims or planning spatial analysis."
             ),
             input_model=InspectDatasetArguments,
-            handler=_inspect_dataset,
+            handler=inspect_dataset,
             recoverable_errors=(OSError, ValueError),
         )
     )
@@ -178,7 +209,7 @@ def build_default_tool_registry(
                 "target EPSG code or planning metric spatial operations."
             ),
             input_model=RecommendMetricCrsArguments,
-            handler=_recommend_metric_crs,
+            handler=recommend_metric_crs,
             recoverable_errors=(OSError, ValueError),
         )
     )

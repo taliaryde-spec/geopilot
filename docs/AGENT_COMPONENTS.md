@@ -6,12 +6,12 @@
 
 本文件只记录已经由源码、测试或真实运行证明的事实；规划中的功能必须明确标记为“未实现”，不能因为出现在路线图里就写成已完成。
 
-这份文档区分“已经形成第一条可运行闭环”和“完整大模型应用的全部组件”。第一条闭环是：自然语言问题 → LLM 规划与工具调用 → 人工审批 → 确定性 GIS 执行 → 验证 → 地图数据与报告。RAG/Embedding、用户确认型长期记忆、Agent Eval V1 和脱敏 Trace 已分别接入；生成答案语义评测、token/成本监控、Web UI 和 MCP 仍是后续独立阶段。
+这份文档区分“已经形成第一条可运行闭环”和“完整大模型应用的全部组件”。第一条闭环是：自然语言问题 → LLM 规划与工具调用 → 人工审批 → 确定性 GIS 执行 → 验证 → 地图数据与报告。RAG/Embedding、用户确认型长期记忆、Agent Eval V1、脱敏 Trace 和本地 FastAPI V1 已分别接入；生成答案语义评测、token/成本监控、Web UI 和 MCP 仍是后续独立阶段。
 
 ## 当前调用链
 
 ```text
-用户自然语言
+用户自然语言（CLI / Local FastAPI）
     ↓
 CLI
     ↓
@@ -67,7 +67,8 @@ GeoPackage / GeoJSON / Markdown
 | Long-term Memory | 已完成安全第一版 | `src/geopilot/memory/`、`agent/runner.py`、`cli.py` | 显式确认写入、namespace 隔离、版本/过期/删除、相关召回和可关闭 Prompt 注入 |
 | Agent Eval | 已完成规则评测 V1 | `src/geopilot/evaluation/`、`evals/agent_cases_v1.json` | 评估任务结果、必需/禁用工具、正确失败、步骤效率、重复调用和延迟 |
 | Observability | 已完成脱敏 Trace V1 | `src/geopilot/observability/` | 以 JSONL 保存提示词哈希、轮数、工具元数据、耗时和终态，不保存模型可见正文 |
-| 用户入口 | CLI 已完成 | `src/geopilot/cli.py` | Agent/执行、RAG、Memory、Agent Eval 与 trace-list 命令 |
+| API 集成 | 本地安全边界 V1 完成 | `src/geopilot/api/` | FastAPI/OpenAPI、workspace 路径策略、Agent/计划/执行/Trace 路由与稳定错误 |
+| 用户入口 | CLI + Local API 已完成 | `src/geopilot/cli.py`、`src/geopilot/api/app.py` | Agent/执行、RAG、Memory、Eval、Trace 和 HTTP 路由 |
 
 ## 当前采用的方法与技术取舍
 
@@ -138,6 +139,16 @@ V1 金标准位于 `evals/agent_cases_v1.json`，包含有效数据检查、检�
 
 当前规则评测不能判断答案整体忠实度、相关性和引用正确率；JSONL 也没有并发锁、集中日志、告警、保留策略或访问控制，低熵 Prompt 哈希存在字典反推风险。供应商 token usage 尚未接入，因此 V1 没有成本指标。完整证据见 `docs/evaluations/AGENT_EVAL_V1.md`。
 
+## FastAPI 产品入口现在有什么
+
+`api/models.py` 定义服务端路径配置、Dataset/Agent/审批请求和安全响应摘要；`api/service.py` 复用已有 Agent、Memory、RAG、PlanStore、Executor 和 Trace，不从 CLI 捕获打印文本；`api/app.py` 提供应用工厂、OpenAPI 和 `/api/v1` 路由。健康检查不初始化模型，因此缺少 API Key 时仍可用于进程探活。
+
+API 不接受 API Key、Base URL 或任意 Provider 凭据，模型配置只来自服务端环境。所有数据路径在直接 Dataset 路由、模型调用的检查/CRS 工具、计划创建、批准、执行和恢复处都经过同一 workspace resolver；API 执行器也显式以 workspace 解析相对输入。这样 HTTP Prompt 不能利用 Function Calling 读取项目外文件，旧计划中的外部数据路径也不能经 API 获批或执行。CLI 本机入口不注入该限制，保持原有本地开发行为。
+
+当前 API 包含 health、数据检查、Agent Run、计划查看/批准/拒绝/执行、Run 查看/恢复和 Trace 查询。Pydantic/FastAPI 限制 Prompt 长度、最大轮数、输出 token、namespace、ID 和请求字段；应用异常返回稳定 `{error: {code, message, context}}`，请求校验 context 不回显原始 Prompt。
+
+V1 只适合绑定 `127.0.0.1`：没有认证、RBAC、租户隔离、限流、TLS、任务队列、流式输出、上传安全、数据库事务或多 worker 并发锁。Swagger `/docs` 是开发调试，不是最终 Web GIS UI。8 项 API 集成测试和完整证据见 `docs/evaluations/API_V1.md`。
+
 ## RAG、Embedding 在哪里
 
 第 8 阶段已经实现以下链路：
@@ -167,7 +178,7 @@ GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和�
 ## 后续完整组件顺序
 
 1. 扩充 Agent 回归集，增加生成答案 Judge、供应商 token/成本统计和 Trace 聚合告警。
-2. FastAPI、Web GIS 图形界面、数据库和权限边界。
+2. Web GIS 图形界面、后台任务、数据库、认证和权限边界（FastAPI 本地 V1 已完成）。
 3. Docker、CI/CD、安全检查和部署。
 4. MCP Server，将稳定 GIS 能力提供给外部 Agent。
 
@@ -275,3 +286,16 @@ GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和�
 - 自动化：全项目 176 项测试通过，Ruff、格式和 Pyright 均为 0 错误；证据见 `docs/evaluations/AGENT_EVAL_V1.md`。
 - 局限：4 条 Case 不代表生产可靠性；规则评测不等于生成忠实度 Judge；尚无 token/成本、并发日志锁、集中告警和访问控制。
 - 下一步：扩充噪声/高风险/计划纠错 Case 并接入 usage；然后进入 FastAPI 与 Web GIS 产品层。
+
+### 2026-09-04：Local FastAPI 产品入口 V1
+
+- 依赖与入口：加入 `fastapi[standard-no-fastapi-cloud-cli]`，配置 `geopilot.api.app:app`；自动生成 OpenAPI、Swagger 与 ReDoc。
+- 路由：实现 health、Dataset 检查、Agent Run、计划查看/批准/拒绝/执行、Run 查看/恢复和 Trace 查询。
+- 服务边界：API 直接复用领域对象，不调用或解析 CLI 输出；模型密钥/provider 配置只存在服务端。
+- 路径安全：为 API Tool Registry 注入 workspace resolver；Plan 创建、批准、执行和恢复再次校验 datasets，执行器显式使用 workspace 解析相对路径。
+- 错误契约：应用错误使用稳定 code/status；HTTP 请求校验不回显原始 Prompt，最大 20,000 字符、8 轮和 8,192 输出 token。
+- 测试发现：独立 workspace 中首次执行因默认 `Path.cwd()` 找不到数据而失败；修复为传递 API workspace 后 8 项 API 测试全部通过。
+- 全量回归：全项目 184 项测试通过，Ruff、格式和 Pyright 均为 0 错误。
+- 局限：只建议 loopback；没有认证、授权、任务队列、流式输出、文件上传安全、数据库和多 worker 并发保证，不能描述成公网生产 API。
+- 证据：`tests/test_api.py`、`docs/evaluations/API_V1.md`；下一步构建同源 Web GIS V1。
+- 求职准备：新增 `docs/AGENT_OPTIMIZATION_AND_CAREER.md`，将模型、Prompt、Context、Loop、工具、规划、执行、RAG、Memory、Eval、Trace、API、Web GIS、MCP、多 Agent 与部署映射到真实证据、优化指标和面试边界。

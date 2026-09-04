@@ -282,9 +282,39 @@ V1 的 Exact Duplicate 只比较“工具名 + JSON 排序后的完整参数”�
 
 规则适合稳定检查工具、错误码、预算、必需事实和禁用行为，成本低且可重复；但 `required_answer_contains` 无法判断完整答案是否忠实、相关、引用正确或表达清楚。LLM Judge 能覆盖语义但可能受模型偏差、Prompt 和自评泄漏影响；人工评测更可信但昂贵。GeoPilot 当前只完成规则 Eval V1，下一步会为生成质量建立独立标注和 Judge，不把 75% 过程分数包装成答案质量分数。
 
-## 十、简历描述草案
+## 十、FastAPI、Context Engineering 与扩展边界
 
-实现自然语言驱动的 GeoPilot GIS Agent：设计 Provider-neutral LLM 适配、Pydantic Function Calling、结构化规划与人工审批，使用确定性 GeoPandas Workflow 完成 13 步覆盖分析并支持失败检查点恢复；构建本地引用型 RAG，采用 BGE 中文 Embedding、token 截断护栏及 BM25 + Dense + RRF，在 20 条困难 Query 上取得 Recall@3/MRR/NDCG@3 0.975/0.975/0.9521，并通过实验否决默认启用高延迟 Rerank；实现用户确认型长期记忆与脱敏 Trace；建立结果/过程/安全三维 Agent 回归集，真实 DeepSeek V1 的 Task Success/Required Tool Recall/Error Recovery 为 0.75/1.0/1.0，并保留冗余检索失败案例。
+### 65. 为什么已经有 CLI，还要做 FastAPI？
+
+CLI 证明的是开发者可以在本机完成闭环，FastAPI 提供的是稳定的产品调用边界：前端不需要解析终端文本，而是通过版本化 JSON 契约调用 Dataset、Agent、Plan、Run 和 Trace。`src/geopilot/api/` 直接复用领域服务，不通过子进程调用 CLI；OpenAPI 还能成为后续 Web GIS 和外部集成的接口合同。HTTP 会扩大攻击面，所以 API 比 CLI 增加了 workspace 路径隔离、请求长度限制、稳定错误 envelope 和服务端模型配置。
+
+### 66. GeoPilot 如何防止路径穿越和 Agent 借工具访问工作区外文件？
+
+只校验用户的第一层 HTTP 参数不够，因为模型也可能在后续 Tool Calling 中生成 `../secret` 或工作区外的绝对路径。`GeoPilotApiService` 将每个来源路径解析为规范绝对路径，并检查它仍位于 `workspace_root`；同一个 resolver 被注入 `build_default_tool_registry`，因此模型生成的工具参数也经过相同策略。计划在创建、批准、执行和恢复前会再次校验数据源，避免旧计划或磁盘篡改绕过入口检查。自动化测试同时覆盖直接请求越界、模型工具越界和旧计划越界。
+
+### 67. 为什么 API 不允许客户端传 provider、base URL 和 API Key？
+
+这些字段会把服务端变成可被客户端操纵的任意模型代理，并增加密钥进入访问日志、Trace 或浏览器存储的风险。GeoPilot 的 HTTP 请求只包含任务参数，模型 provider、endpoint 和密钥由服务端环境变量加载；返回值也只包含安全摘要，不返回配置和原始工具参数。V1 仍只建议监听 loopback，因为尚未实现认证、RBAC、限流和 TLS。
+
+### 68. 当前 FastAPI 能否直接部署为生产服务？
+
+不能。当前是本地产品入口 V1，8 项集成测试证明 API 契约、工作区隔离、真实 Agent Loop 的 mock 路径、审批冲突、执行恢复入口和 Trace 查询可用；但 Agent 与 GIS 分析仍在同步请求中运行，没有后台队列、SSE/WebSocket、幂等键、数据库锁、多 worker 一致性、上传限额、认证和负载测试。正确演进顺序是先做本地 Web GIS 演示，再把耗时任务改为 Job，补齐身份和权限后才评估公网部署。
+
+### 69. Context Engineering 和 Prompt Engineering 有什么区别？GeoPilot 怎么做？
+
+Prompt Engineering 主要优化单次指令的措辞和结构；Context Engineering 关注模型在每一步实际看到的全部高信号信息，包括 System Prompt、工具定义、当前消息、RAG 片段、长期记忆和工具结果。GeoPilot 已经把这些来源分层：版本化 Prompt 定义规则，Tool Registry 只暴露必要 Schema，RAG 按 Query 即时检索，Memory 先做 namespace 和相关性过滤，工具结果使用结构化摘要。下一步会加入 token budget、旧工具结果压缩、检索拒答阈值和 Prompt/工具版本 Trace，以量化上下文质量，而不是无限增大 Prompt。
+
+### 70. 为什么现在没有做多 Agent？什么时候值得做？
+
+当前 GIS 任务有清晰的共享状态、严格审批和确定性执行链，多 Agent 会引入状态同步、重复工具调用、额外 token、冲突写入和更难的 Trace，而尚无评测证明它能提高成功率或延迟。因此当前采用一个决策 Agent 加确定性 Workflow。只有当任务出现可独立并行的子问题，例如法规检索、候选区空间计算和报告审查，并且单 Agent 在版本化 Eval 上形成稳定瓶颈时，才会用 Supervisor/Worker 试验；上线条件是质量或总耗时的收益大于成本与复杂度增长。
+
+### 71. MCP 会放在系统哪一层，为什么不是越早接越好？
+
+MCP 位于外部客户端与 GeoPilot 能力之间，提供 tools、resources 和 prompts 的标准发现/调用协议；它不替代模型的 Function Calling、Agent Loop、RAG 或 Memory。GeoPilot 计划先将只读、契约稳定的 `inspect_dataset` 和 `recommend_metric_crs` 发布为本地 MCP Server，并复用现有 Pydantic Schema 与 workspace policy。先完成内部工具、API 和评测，是因为过早发布不稳定工具会把命名、参数和权限问题扩散给外部客户端；写操作要等认证、审计和幂等机制成熟后再开放。
+
+## 十一、简历描述草案
+
+实现自然语言驱动的 GeoPilot GIS Agent：设计 Provider-neutral LLM 适配、Pydantic Function Calling、结构化规划与人工审批，使用确定性 GeoPandas Workflow 完成 13 步覆盖分析并支持失败检查点恢复；构建本地引用型 RAG，采用 BGE 中文 Embedding、token 截断护栏及 BM25 + Dense + RRF，在 20 条困难 Query 上取得 Recall@3/MRR/NDCG@3 0.975/0.975/0.9521，并通过实验否决默认启用高延迟 Rerank；实现用户确认型长期记忆、脱敏 Trace 与 workspace 隔离的 FastAPI 接口；建立结果/过程/安全三维 Agent 回归集，真实 DeepSeek V1 的 Task Success/Required Tool Recall/Error Recovery 为 0.75/1.0/1.0，并保留冗余检索失败案例。
 
 ## 迭代记录
 
@@ -339,3 +369,9 @@ V1 的 Exact Duplicate 只比较“工具名 + JSON 排序后的完整参数”�
 - 回答基于 `src/geopilot/evaluation/`、`src/geopilot/observability/`、4 条版本化 Case、176 项自动化测试和真实 DeepSeek 实验。
 - 如实记录 0.75 Task Success：RAG Case 因二次检索超过预算失败；不把 Required Tool Recall 1.0 或正确答案单独包装成全通过。
 - 简历草案加入 Eval 与 Trace 的实际指标，同时明确 4 条 Case 只是 V1，不声称生产可靠性或完整生成质量评测。
+
+### 2026-09-04：Local FastAPI 与 Agent 优化矩阵
+
+- 新增 API/CLI 边界、两层路径穿越防护、服务端模型配置、生产化缺口、Context Engineering、多 Agent 决策和 MCP 发布顺序共 7 道项目化问题。
+- 回答基于 `src/geopilot/api/`、`tests/test_api.py` 的 8 项集成测试、全项目 184 项测试和 `docs/evaluations/API_V1.md`，不把本地同步 API 描述为生产服务。
+- 新增 `AGENT_OPTIMIZATION_AND_CAREER.md`，逐组件记录当前证据、下一步优化、验收指标和面试表达；简历草案只加入已实现的 workspace 隔离 FastAPI。
