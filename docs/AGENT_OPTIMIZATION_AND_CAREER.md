@@ -30,7 +30,7 @@ GeoPilot 采用 Agent + Workflow，而不是纯 Agent：LLM 处理自然语言�
 | Agent Eval | 4 条结果/过程/安全 Case；Task Success 0.75；Correct Failure/工具/效率指标 | 扩展 normal/noisy/missing/high-risk/tool-failure/plan-correction；增加 partial outcome；人工集 + 独立 LLM Judge | 版本对照、置信区间、重复运行方差；回归门禁 | 为什么答案正确但冗余二次检索仍失败 |
 | Observability | 脱敏 JSONL：Prompt hash、模型、耗时、轮数、工具状态；不存正文 | trace/span correlation、Prompt/工具版本、token/cost、线上聚合告警、采样与保留策略 | Trace 覆盖率；工具失败/超时/接管率；敏感信息扫描 | 可观测性与日志堆积的区别；隐私和可调试性的权衡 |
 | FastAPI | health、Dataset、Agent、Plan、Run、Trace；workspace 路径限制；稳定错误 | 后台 Job + SSE；上传白名单/限额；认证/RBAC/限流；幂等键；CORS/TLS | API 契约、路径穿越、重复提交、并发和负载测试 | 为什么 HTTP 入口需要比本机 CLI 更严格的能力边界 |
-| Web GIS | 未实现 | 同源静态 UI：Prompt、计划审批、步骤状态、GeoJSON 地图；之后再做流式和上传 | 关键用户流程 E2E；地图 CRS/空结果/大 GeoJSON | 把 Agent 的计划与证据展示给用户，而非只做聊天框 |
+| Web GIS | 同源响应式 UI；预检、Agent 工具摘要、结构化 Plan ID、审批、Run 检查点、受控 GeoJSON/Markdown 产物、Leaflet 地图 | Job + SSE；上传安全；多图层；Playwright E2E；大数据简化/瓦片 | 核心流程 E2E；首状态/地图加载延迟；人工接管率；地图 CRS/空结果/大 GeoJSON | 为什么不是聊天框；如何把 Agent 的证据和权限交还给用户 |
 | MCP | 未实现 | 先发布只读 `inspect_dataset`/`recommend_metric_crs`；复用 Schema 和 workspace policy；再评估远程 Streamable HTTP | Inspector 契约、协议版本、权限/路径、外部客户端调用 | MCP Host/Client/Server、tools/resources/prompts；MCP 不替代 Function Calling |
 | Multi-Agent | 未实现且不是当前优先级 | 只有子任务不可预知且可并行、单 Agent 成为瓶颈时做 orchestrator-workers 对照 | 相对单 Agent 的质量、延迟、成本和冲突率 | 不为热点堆架构；先证明并行收益再增加协调复杂度 |
 | 部署与安全 | `.env`、ignored artifacts、本地 API、测试门禁 | Docker 非 root、CI、SBOM/依赖扫描、Secret scan、数据库备份、认证和审计 | 镜像复现、CI 全绿、漏洞门禁、恢复演练 | “本地可运行”与“生产可用”的具体差距 |
@@ -60,8 +60,8 @@ Agent Eval + redacted Trace
 
 ## 推荐的后续开发顺序
 
-1. 完成本地 FastAPI V1 和同源 Web GIS V1，形成可演示产品，而不是只在终端展示。
-2. 把同步长任务改成 Job + SSE：创建任务立即返回 `job_id`，页面查看步骤和取消。
+1. 已完成本地 FastAPI V1 和同源 Web GIS V1，形成“预检 → Agent → 审批 → 执行 → 地图”的可演示产品。
+2. 下一步把同步长任务改成 Job + SSE：创建任务立即返回 `job_id`，页面查看步骤和取消。
 3. 接入模型 usage，Trace 增加 token、成本、Prompt/工具版本；扩展 Agent Eval Case。
 4. 增加上传安全、SQLite/Postgres、认证/RBAC、幂等和并发控制。
 5. Docker + GitHub Actions + Secret/依赖安全检查，完成本地到部署的工程闭环。
@@ -78,13 +78,13 @@ Agent Eval + redacted Trace
 - 指标：Hybrid Recall/MRR/NDCG、Rerank 退化与 CPU 延迟、Agent Task Success/工具召回/正确失败。
 - 失败复盘：Rerank 不值得默认启用；Agent RAG Case 因二次检索超过预算；API 独立 workspace 首次解析错误。
 - 安全边界：API Key 服务端管理、Path resolver、审批状态机、确定性 GIS 计算、Trace 不保存正文。
-- 未实现：认证、队列、多 worker、Web GIS、MCP、生产部署和生成侧 Judge；回答时主动说明，而不是等面试官拆穿。
+- 未实现：认证、队列、多 worker、浏览器 E2E、MCP、生产部署和生成侧 Judge；回答时主动说明，而不是等面试官拆穿。
 
 ## 当前可用简历描述
 
-> 设计并实现自然语言驱动的 GeoPilot GIS Agent：基于 Provider-neutral LLM Adapter 与 Pydantic Function Calling 完成数据检查、RAG 检索、结构化规划和人工审批，并由可恢复的确定性 GeoPandas Workflow 执行 13 步空间覆盖分析；构建 BGE 中文 Embedding + BM25/Dense/RRF 混合检索，在 20 条困难 Query 上取得 Recall@3/MRR/NDCG@3 0.975/0.975/0.952，并通过对照实验否决高延迟 Rerank 默认上线；实现用户确认型长期记忆、结果/过程/安全 Agent Eval、脱敏 Trace 和 workspace 隔离的 FastAPI 接口。
+> 设计并实现自然语言驱动的 GeoPilot GIS Agent：基于 Provider-neutral LLM Adapter 与 Pydantic Function Calling 完成数据检查、RAG 检索、结构化规划和人工审批，并由可恢复的确定性 GeoPandas Workflow 执行 13 步空间覆盖分析；构建 BGE 中文 Embedding + BM25/Dense/RRF 混合检索，在 20 条困难 Query 上取得 Recall@3/MRR/NDCG@3 0.975/0.975/0.952，并通过对照实验否决高延迟 Rerank 默认上线；实现用户确认型长期记忆、结果/过程/安全 Agent Eval、脱敏 Trace、workspace 隔离的 FastAPI 和展示审批/检查点/GeoJSON 的 Web GIS。
 
-FastAPI 阶段已经通过 184 项全量测试；提交后可使用这段描述。仍不能写“生产级”“高并发”“多 Agent”“MCP 已接入”或虚构用户量。
+FastAPI + Web GIS 阶段已经通过 186 项全量测试；提交后可使用这段描述。仍不能写“生产级”“高并发”“多 Agent”“MCP 已接入”或虚构用户量。
 
 ## 面试准备顺序
 

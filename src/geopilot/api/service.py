@@ -239,6 +239,7 @@ class GeoPilotApiService:
             answer=result.final_answer,
             model_turns=result.model_turns,
             tools=[self._tool_summary(tool) for tool in result.tool_results],
+            plan_ids=self._submitted_plan_ids(result.tool_results),
             trace_id=trace_id,
         )
 
@@ -290,6 +291,46 @@ class GeoPilotApiService:
             return self.run_store.load(run_id)
         except RunStoreError as error:
             raise self._run_store_error(error) from error
+
+    def resolve_run_artifact(self, run_id: str, output: str) -> Path:
+        """Resolve one successful browser-safe artifact without trusting a path."""
+        run = self.show_run(run_id)
+        matching_steps = [step for step in run.steps if step.output == output]
+        if not matching_steps:
+            raise ApiServiceError(
+                404,
+                "artifact_not_found",
+                f"Run artifact does not exist: {output}",
+            )
+        step = matching_steps[0]
+        if step.status.value != "succeeded" or step.artifact_path is None:
+            raise ApiServiceError(
+                409,
+                "artifact_not_ready",
+                f"Run artifact is not ready: {output}",
+            )
+
+        artifact = Path(step.artifact_path).resolve()
+        run_directory = (self.settings.runs_directory / run_id).resolve()
+        if not artifact.is_relative_to(run_directory):
+            raise ApiServiceError(
+                422,
+                "unsafe_artifact_path",
+                "Run artifact path is outside its authorized run directory.",
+            )
+        if artifact.suffix.lower() not in {".geojson", ".md"}:
+            raise ApiServiceError(
+                415,
+                "unsupported_web_artifact",
+                "Only GeoJSON and Markdown artifacts are available to the Web UI.",
+            )
+        if not artifact.is_file():
+            raise ApiServiceError(
+                404,
+                "artifact_file_missing",
+                f"Run artifact file is missing: {output}",
+            )
+        return artifact
 
     def resume_run(self, run_id: str) -> ExecutionRun:
         try:
@@ -363,6 +404,20 @@ class GeoPilotApiService:
             success=result.success,
             error_code=result.error_code,
         )
+
+    @staticmethod
+    def _submitted_plan_ids(results: Sequence[ToolResult]) -> list[str]:
+        plan_ids: list[str] = []
+        for result in results:
+            if (
+                result.name == "submit_analysis_plan"
+                and result.success
+                and result.output is not None
+            ):
+                plan_id = result.output.get("plan_id")
+                if isinstance(plan_id, str) and plan_id not in plan_ids:
+                    plan_ids.append(plan_id)
+        return plan_ids
 
     @staticmethod
     def _plan_error(error: PlanStoreError) -> ApiServiceError:

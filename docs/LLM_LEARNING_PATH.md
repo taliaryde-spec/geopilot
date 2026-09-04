@@ -27,11 +27,11 @@ GeoPilot 后续大模型部分以[卡码大模型学习路线](https://notes.kam
 | RAG 优化 | 混合检索与 Rerank 已评估；Rerank 无收益故默认关闭 | 当前阶段完成 | 20 Query、24 标签的控制变量实验 |
 | RAG 评估 | Precision、Recall、MRR、NDCG | 检索侧完成 | `docs/evaluations/RAG_RERANK_V1.md` |
 | Agent 设计 | LLM 决策 + 确定性 Workflow + 人工审批 | 核心闭环完成 | 结构化计划、执行恢复与真实 Tool Calling |
-| Agent Eval 与 Trace | 结果/过程/安全规则评测、正确失败、脱敏 JSONL | V1 完成 | 4-Case DeepSeek Task Success 0.75；当前全项目 184 项自动化测试 |
+| Agent Eval 与 Trace | 结果/过程/安全规则评测、正确失败、脱敏 JSONL | V1 完成 | 4-Case DeepSeek Task Success 0.75；当前全项目 186 项自动化测试 |
 | Memory | 工作记忆、任务状态、长期偏好/目标/背景 | 安全第一版完成 | 用户确认、namespace、revision、过期、删除、词法召回和 Prompt 边界 |
 | Context Engineering | Prompt、工具 Schema、RAG、Memory、工具结果的高信号上下文组织 | 基础分层完成 | 下一步加入 token budget、压缩、拒答阈值和上下文版本 Trace |
 | MCP | 对外发布稳定 GIS 工具 | 待开始 | MCP Server、外部客户端调用测试 |
-| 部署与工程化 | API、Web GIS、容器、CI/CD、监控 | 本地 FastAPI V1 完成 | 8 项 API 测试已覆盖契约和路径隔离；Web GIS、Job、认证、负载指标待补 |
+| 部署与工程化 | API、Web GIS、容器、CI/CD、监控 | FastAPI + Web GIS V1 完成 | 10 项 API/Web 测试覆盖契约、路径、Plan ID 与受控产物；Job、E2E、认证和负载指标待补 |
 | Transformer 与微调 | 应用开发所需原理和选型边界 | 学习阶段待开展 | 原理笔记、选型题，不为了简历盲目训练模型 |
 
 ## 当前 RAG 学习顺序
@@ -50,7 +50,7 @@ Memory V1 已完成：区分 Working Memory、Plan/Run Session State、Long-term
 
 Agent Eval 与可观测性 V1 也已完成：`evals/agent_cases_v1.json` 用 4 条任务分别检查正常数据、组合工具、RAG 和正确失败；真实 DeepSeek 的 Task Success、Required Tool Recall、Error Recovery 为 0.75/1.0/1.0。唯一失败是二次检索超过步骤预算。普通 Agent 默认写入不含 Prompt/参数/输出正文的脱敏 JSONL Trace。
 
-本地 FastAPI V1 已完成：`src/geopilot/api/` 将 Dataset、Agent、Plan、Run 和 Trace 暴露为版本化 JSON API，并把请求路径、模型生成的工具路径、旧计划审批和执行目录统一限制在 workspace；8 项集成测试通过。它仍是同步、无认证的 loopback 产品入口，下一步是同源 Web GIS、后台 Job/SSE 与安全部署能力。
+本地 FastAPI 与 Web GIS V1 已完成：`src/geopilot/api/` 将 Dataset、Agent、Plan、Run 和 Trace 暴露为版本化 JSON API，并把请求路径、模型生成的工具路径、旧计划审批和执行目录统一限制在 workspace；`src/geopilot/web/` 展示工具证据、结构化计划、人工审批、Run 检查点和受控 GeoJSON。10 项 API/Web 集成测试通过。它仍是同步、无认证的 loopback 产品入口，下一步是后台 Job/SSE、浏览器 E2E 与安全部署能力。
 
 近期 Agent 工程学习从“只写更长 Prompt”升级为 Context Engineering：控制模型每一步能看到的 Prompt、工具说明、RAG、Memory 和工具结果，优先保留高信号、按需加载的上下文。GeoPilot 当前已完成来源分层，后续用 token/成本、步骤效率和任务成功率验证压缩或检索策略，不能只凭主观观感优化。
 

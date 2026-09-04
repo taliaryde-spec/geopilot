@@ -2,7 +2,7 @@
 
 GeoPilot 是一个自然语言驱动的地理空间分析 Agent。用户提供空间数据和分析问题，Agent 将检查数据、规划分析步骤、调用 GIS 工具、验证结果，并生成地图与报告。
 
-> 当前项目处于 v0.1 开发阶段。本仓库已经跑通自然语言规划、人工审批、确定性 GIS 执行、结果验证与报告，并加入了带引用的本地 RAG、中文 Embedding、长期记忆、完整 Agent 规则评测、脱敏运行 Trace 和 workspace 隔离的本地 FastAPI。
+> 当前项目处于 v0.1 开发阶段。本仓库已经跑通自然语言规划、人工审批、确定性 GIS 执行、结果验证与报告，并加入了带引用的本地 RAG、中文 Embedding、长期记忆、完整 Agent 规则评测、脱敏运行 Trace、workspace 隔离的本地 FastAPI 和 Web GIS。
 
 ## 演示场景
 
@@ -29,6 +29,7 @@ GeoPilot 是一个自然语言驱动的地理空间分析 Agent。用户提供�
 - 版本化 Agent 金标准任务、正确失败/工具/步骤/安全指标和真实 DeepSeek 回归
 - 默认脱敏 JSONL Trace，只保存 Prompt 哈希、工具元数据、耗时、轮数和终态
 - Dataset、Agent、Plan、Run、Trace 的本地 FastAPI/OpenAPI，包含路径越界和状态冲突防护
+- 数据预检、工具证据、计划审批、执行检查点和 GeoJSON 地图组成的响应式 Web GIS
 - Ruff、Pyright 和 Pytest 质量检查
 
 完整组件规划与各阶段验收标准见 [GeoPilot 项目路线图](docs/PROJECT_ROADMAP.md)。
@@ -102,13 +103,16 @@ uv run fastapi dev
 
 随后访问：
 
+- Web GIS：`http://127.0.0.1:8000/`
 - 健康检查：`http://127.0.0.1:8000/api/v1/health`
 - Swagger API 文档：`http://127.0.0.1:8000/docs`
 - ReDoc：`http://127.0.0.1:8000/redoc`
 
 API 直接复用 Agent、计划审批和确定性执行服务，不启动子进程解析 CLI 文本。请求路径、模型在 Tool Calling 中生成的路径以及旧计划内的数据源都会被限制在配置的 workspace 中；模型 provider、endpoint 和 API Key 只从服务端环境读取，不允许浏览器传入。
 
-当前版本没有认证、限流、后台队列、流式输出和多 worker 一致性保证，只应监听本机回环地址，不能直接作为公网生产服务。接口、威胁边界和测试证据见 [FastAPI 产品入口 V1](docs/evaluations/API_V1.md)。
+Web GIS 可完成“数据预检 → Agent 规划 → 人工审批 → 确定性执行 → GeoJSON 地图/报告”的演示闭环。页面从 Tool Result 的结构化字段取得 Plan ID，并只通过受控 Run 产物路由读取 GeoJSON/Markdown，不解析模型文本猜状态，也不直接访问本地绝对路径。完整设计见 [Web GIS V1](docs/evaluations/WEB_GIS_V1.md)。
+
+当前版本没有认证、限流、后台队列、流式输出和多 worker 一致性保证，只应监听本机回环地址，不能直接作为公网生产服务。API 接口、威胁边界和测试证据见 [FastAPI 产品入口 V1](docs/evaluations/API_V1.md)。
 
 配置完成后运行：
 
@@ -233,7 +237,7 @@ uv run geopilot show-run <run_id>
 uv run geopilot resume <run_id>
 ```
 
-完整 Agent 组件、实际方法和迭代证据见 [Agent 组件与工程实现记录](docs/AGENT_COMPONENTS.md)，对应的面试追问与项目化回答见 [Agent 面试问题与项目化回答](docs/AGENT_INTERVIEW_QA.md)。逐组件的优化方向、验收指标与求职证据见 [Agent 组件优化与求职证据矩阵](docs/AGENT_OPTIMIZATION_AND_CAREER.md)。以后每次 Agent 相关推进都会同步追加两份主文档。第一条“问题 → 规划 → 审批 → 执行 → 报告”闭环、本地 RAG、长期记忆、Agent Eval V1、脱敏 Trace 与本地 FastAPI 已经具备；生成语义评测、Web GIS 和 MCP 仍按路线图分阶段实现。
+完整 Agent 组件、实际方法和迭代证据见 [Agent 组件与工程实现记录](docs/AGENT_COMPONENTS.md)，对应的面试追问与项目化回答见 [Agent 面试问题与项目化回答](docs/AGENT_INTERVIEW_QA.md)。逐组件的优化方向、验收指标与求职证据见 [Agent 组件优化与求职证据矩阵](docs/AGENT_OPTIMIZATION_AND_CAREER.md)。以后每次 Agent 相关推进都会同步追加两份主文档。第一条“问题 → 规划 → 审批 → 执行 → 报告”闭环、本地 RAG、长期记忆、Agent Eval V1、脱敏 Trace、本地 FastAPI 与 Web GIS 已经具备；生成语义评测、异步 Job、安全部署和 MCP 仍按路线图分阶段实现。
 
 ## 长期记忆
 
@@ -388,6 +392,7 @@ src/geopilot/
 ├── observability/         # 不保存模型正文的本地脱敏运行 Trace
 ├── rag/                   # 文档加载、切块、Embedding、向量索引、检索与评估
 ├── tools/                 # 可独立测试的确定性 GIS 工具
+├── web/                   # 人工审批、执行检查点与 GeoJSON 地图界面
 └── workflows/             # 组合多个工具的业务流水线
 knowledge/                 # GIS 知识文档与章节级检索评估集
 evals/                     # 版本化完整 Agent 金标准任务集
@@ -420,7 +425,8 @@ uv run pytest -q
 - [x] 用户确认型长期记忆、作用域、过期、删除和 Agent 注入
 - [x] 完整 Agent 规则评测、真实 DeepSeek 回归和脱敏 Trace
 - [x] workspace 隔离的本地 FastAPI 与 OpenAPI
-- [ ] 提供可交互的 Web 界面
+- [x] 提供计划审批、运行检查点和 GeoJSON 地图的 Web GIS V1
+- [ ] 后台 Job、流式进度、安全上传、认证与部署
 
 ## v0.1 验收标准
 

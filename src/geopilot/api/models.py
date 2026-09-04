@@ -80,6 +80,7 @@ class AgentRunResponse(BaseModel):
     answer: str
     model_turns: int = Field(ge=1)
     tools: list[AgentToolSummary]
+    plan_ids: list[str] = Field(default_factory=list)
     trace_id: str | None = None
 
 

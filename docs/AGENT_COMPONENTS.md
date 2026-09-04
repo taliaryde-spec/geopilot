@@ -6,12 +6,12 @@
 
 本文件只记录已经由源码、测试或真实运行证明的事实；规划中的功能必须明确标记为“未实现”，不能因为出现在路线图里就写成已完成。
 
-这份文档区分“已经形成第一条可运行闭环”和“完整大模型应用的全部组件”。第一条闭环是：自然语言问题 → LLM 规划与工具调用 → 人工审批 → 确定性 GIS 执行 → 验证 → 地图数据与报告。RAG/Embedding、用户确认型长期记忆、Agent Eval V1、脱敏 Trace 和本地 FastAPI V1 已分别接入；生成答案语义评测、token/成本监控、Web UI 和 MCP 仍是后续独立阶段。
+这份文档区分“已经形成第一条可运行闭环”和“完整大模型应用的全部组件”。第一条闭环是：自然语言问题 → LLM 规划与工具调用 → 人工审批 → 确定性 GIS 执行 → 验证 → 地图数据与报告。RAG/Embedding、用户确认型长期记忆、Agent Eval V1、脱敏 Trace、本地 FastAPI 和 Web GIS V1 已分别接入；生成答案语义评测、token/成本监控、后台 Job、认证部署和 MCP 仍是后续独立阶段。
 
 ## 当前调用链
 
 ```text
-用户自然语言（CLI / Local FastAPI）
+用户自然语言（CLI / Web GIS / Local FastAPI）
     ↓
 CLI
     ↓
@@ -32,6 +32,8 @@ PlanStore（awaiting_approval → approved / rejected）
 RunStore（步骤检查点、失败信息、产物元数据）
     ↓
 GeoPackage / GeoJSON / Markdown
+    ↓
+受控 Web 产物路由 → Leaflet GeoJSON 地图 / Markdown 报告链接
 
 旁路质量链路：版本化 Agent Cases → 真实 Agent Run → 结果/过程/安全规则评分
 旁路观测链路：普通 Agent Run → 脱敏 Trace JSONL → trace-list
@@ -68,7 +70,8 @@ GeoPackage / GeoJSON / Markdown
 | Agent Eval | 已完成规则评测 V1 | `src/geopilot/evaluation/`、`evals/agent_cases_v1.json` | 评估任务结果、必需/禁用工具、正确失败、步骤效率、重复调用和延迟 |
 | Observability | 已完成脱敏 Trace V1 | `src/geopilot/observability/` | 以 JSONL 保存提示词哈希、轮数、工具元数据、耗时和终态，不保存模型可见正文 |
 | API 集成 | 本地安全边界 V1 完成 | `src/geopilot/api/` | FastAPI/OpenAPI、workspace 路径策略、Agent/计划/执行/Trace 路由与稳定错误 |
-| 用户入口 | CLI + Local API 已完成 | `src/geopilot/cli.py`、`src/geopilot/api/app.py` | Agent/执行、RAG、Memory、Eval、Trace 和 HTTP 路由 |
+| Web GIS | 本地可交互 V1 完成 | `src/geopilot/web/`、`src/geopilot/api/app.py` | 数据预检、Agent 工具摘要、计划审批、Run 检查点和 GeoJSON 地图 |
+| 用户入口 | CLI + Local API + Web GIS 已完成 | `src/geopilot/cli.py`、`src/geopilot/api/app.py`、`src/geopilot/web/` | 开发者命令、HTTP 契约与可展示的人机协作入口 |
 
 ## 当前采用的方法与技术取舍
 
@@ -147,7 +150,17 @@ API 不接受 API Key、Base URL 或任意 Provider 凭据，模型配置只来�
 
 当前 API 包含 health、数据检查、Agent Run、计划查看/批准/拒绝/执行、Run 查看/恢复和 Trace 查询。Pydantic/FastAPI 限制 Prompt 长度、最大轮数、输出 token、namespace、ID 和请求字段；应用异常返回稳定 `{error: {code, message, context}}`，请求校验 context 不回显原始 Prompt。
 
-V1 只适合绑定 `127.0.0.1`：没有认证、RBAC、租户隔离、限流、TLS、任务队列、流式输出、上传安全、数据库事务或多 worker 并发锁。Swagger `/docs` 是开发调试，不是最终 Web GIS UI。8 项 API 集成测试和完整证据见 `docs/evaluations/API_V1.md`。
+V1 只适合绑定 `127.0.0.1`：没有认证、RBAC、租户隔离、限流、TLS、任务队列、流式输出、上传安全、数据库事务或多 worker 并发锁。10 项 API/Web 集成测试中的 API 基线和完整证据见 `docs/evaluations/API_V1.md`。
+
+## Web GIS 产品界面现在有什么
+
+`web/index.html`、`styles.css` 和 `app.js` 构成同源响应式界面。用户可以先调用确定性 Dataset Intake，再提交自然语言任务；页面展示 Agent 回答、工具成功/错误摘要和 Trace ID。若 Agent 成功调用 `submit_analysis_plan`，服务端从结构化 Tool Result 收集 `plan_ids`，页面直接加载真实持久化计划，而不是从模型回答文本中猜 ID。
+
+计划卡片展示 operation、说明、风险和状态。`awaiting_approval` 时只能批准或拒绝；批准仍不自动执行，用户需要再次明确点击执行。执行完成后页面展示 Run 状态和逐步检查点。第一个成功 GeoJSON 通过 Leaflet 加载，Markdown 报告提供受控链接。Agent 仍只负责理解、工具选择和计划；浏览器不会执行模型生成的 Python 或任意文件操作。
+
+产物路由使用 `run_id + output` 定位已登记成功步骤，再验证规范化路径位于对应 Run 目录，只允许 `.geojson` 和 `.md`。模型回答、错误和数据属性用 DOM `textContent` 渲染，不使用 `innerHTML`。GeoJSON 已由后端确定性转换到 `EPSG:4326`；地图不参与距离或面积计算。
+
+当前是 Web GIS V1：同步 Agent/执行会让页面等待；没有上传、多图层、浏览器 E2E、视觉回归、CSP、认证或大 GeoJSON 优化；Leaflet 和 OpenStreetMap 底图依赖网络。证据和下一步指标见 `docs/evaluations/WEB_GIS_V1.md`。
 
 ## RAG、Embedding 在哪里
 
@@ -178,7 +191,7 @@ GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和�
 ## 后续完整组件顺序
 
 1. 扩充 Agent 回归集，增加生成答案 Judge、供应商 token/成本统计和 Trace 聚合告警。
-2. Web GIS 图形界面、后台任务、数据库、认证和权限边界（FastAPI 本地 V1 已完成）。
+2. 后台 Job/SSE、数据库、上传安全、认证和权限边界（FastAPI 与 Web GIS 本地 V1 已完成）。
 3. Docker、CI/CD、安全检查和部署。
 4. MCP Server，将稳定 GIS 能力提供给外部 Agent。
 
@@ -299,3 +312,15 @@ GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和�
 - 局限：只建议 loopback；没有认证、授权、任务队列、流式输出、文件上传安全、数据库和多 worker 并发保证，不能描述成公网生产 API。
 - 证据：`tests/test_api.py`、`docs/evaluations/API_V1.md`；下一步构建同源 Web GIS V1。
 - 求职准备：新增 `docs/AGENT_OPTIMIZATION_AND_CAREER.md`，将模型、Prompt、Context、Loop、工具、规划、执行、RAG、Memory、Eval、Trace、API、Web GIS、MCP、多 Agent 与部署映射到真实证据、优化指标和面试边界。
+
+### 2026-09-04：Web GIS V1 与受控产物展示
+
+- 界面：新增 `src/geopilot/web/`，支持数据预检、Agent 运行、工具证据、结构化 Plan ID、计划风险、批准/拒绝、显式执行、Run 检查点、Leaflet GeoJSON 和报告链接。
+- API 契约：`AgentRunResponse` 新增从成功 Tool Result 提取的 `plan_ids`，不从自然语言回答解析状态。
+- 安全：新增 `GET /api/v1/runs/{run_id}/artifacts/{output}`，按 Run 登记步骤解析产物，限制在 Run 目录并只允许 GeoJSON/Markdown；前端不用 `innerHTML`。
+- GIS 边界：地图只展示后端导出的 EPSG:4326 GeoJSON；距离、面积和覆盖指标仍在米制 CRS 的确定性工具中计算。
+- 测试：API/Web 集成测试增至 10 项，覆盖静态资源、结构化 Plan ID、GeoJSON 媒体类型和 GeoPackage 拒绝；JavaScript 通过 `node --check`。
+- 全量回归：全项目 186 项测试通过，Ruff、格式和 Pyright 均为 0 错误。
+- 打包验证：`uv build` 成功生成 sdist/wheel，wheel 内容包含 Web HTML/CSS/JS；构建缓存与 `dist` 验证产物随后清理。
+- 局限：同步请求、无上传/认证/浏览器 E2E/多图层/大数据优化，外部 Leaflet 与底图依赖网络；下一步为 Job + SSE 和 Playwright 核心路径。
+- 证据：`docs/evaluations/WEB_GIS_V1.md`。

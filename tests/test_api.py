@@ -73,6 +73,22 @@ def test_health_and_openapi_do_not_require_model_credentials(tmp_path: Path) -> 
     assert "/api/v1/plans/{plan_id}/approve" in schema.json()["paths"]
 
 
+def test_web_app_and_static_assets_are_served(tmp_path: Path) -> None:
+    client = TestClient(create_app(_settings(tmp_path)))
+
+    page = client.get("/")
+    script = client.get("/static/app.js")
+    stylesheet = client.get("/static/styles.css")
+
+    assert page.status_code == 200
+    assert "GeoPilot · 地理空间分析 Agent" in page.text
+    assert "Human-in-the-loop" in page.text
+    assert script.status_code == 200
+    assert "innerHTML" not in script.text
+    assert stylesheet.status_code == 200
+    assert "--forest" in stylesheet.text
+
+
 def test_dataset_inspection_accepts_workspace_path_and_blocks_traversal(
     tmp_path: Path,
 ) -> None:
@@ -144,6 +160,7 @@ def test_agent_api_runs_tool_call_and_writes_redacted_trace(
     assert payload["tools"] == [
         {"name": "inspect_dataset", "success": True, "error_code": None}
     ]
+    assert payload["plan_ids"] == []
     assert payload["trace_id"].startswith("trace_")
     serialized_trace = settings.trace_path.read_text(encoding="utf-8")
     assert prompt not in serialized_trace
@@ -191,6 +208,59 @@ def test_agent_api_tool_policy_blocks_model_path_traversal(
     assert response.json()["answer"] == "路径超出工作区，未读取文件。"
 
 
+def test_agent_api_returns_submitted_plan_id_for_web_approval(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_facilities_csv(tmp_path)
+    model = ScriptedApiModel(
+        [
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="call-api-plan",
+                        name="submit_analysis_plan",
+                        arguments={
+                            "user_goal": "重投影设施数据",
+                            "datasets": ["data/facilities.csv"],
+                            "steps": [
+                                {
+                                    "step_id": 1,
+                                    "operation": "reproject",
+                                    "description": "转换到米制坐标系。",
+                                    "inputs": ["data/facilities.csv"],
+                                    "parameters": {"target_crs": "EPSG:32651"},
+                                    "output": "facilities_projected",
+                                    "expected_output": "米制设施点图层",
+                                    "risk_level": "medium",
+                                }
+                            ],
+                            "expected_outputs": ["米制设施点图层"],
+                            "risks": [],
+                            "assumptions": [],
+                        },
+                    )
+                ]
+            ),
+            ModelResponse(content="计划已提交，等待审批。"),
+        ]
+    )
+    monkeypatch.setenv("GEOPILOT_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("GEOPILOT_MODEL", "test-model")
+    monkeypatch.setattr(service_module, "build_model", lambda settings: model)
+    client = TestClient(create_app(_settings(tmp_path)))
+
+    response = client.post(
+        "/api/v1/agent/runs",
+        json={"prompt": "生成重投影计划", "memory_enabled": False},
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()["plan_ids"]) == 1
+    assert response.json()["plan_ids"][0].startswith("plan_")
+
+
 def test_plan_api_approves_executes_and_shows_run(tmp_path: Path) -> None:
     source = tmp_path / "data" / "facilities.geojson"
     source.parent.mkdir(parents=True)
@@ -213,9 +283,18 @@ def test_plan_api_approves_executes_and_shows_run(tmp_path: Path) -> None:
                     parameters={"target_crs": "EPSG:32651"},
                     output="facilities_projected",
                     expected_output="米制设施图层",
-                )
+                ),
+                AnalysisPlanStep(
+                    step_id=2,
+                    operation=AnalysisOperation.EXPORT_GEOJSON,
+                    description="导出 Web 地图 GeoJSON。",
+                    inputs=["facilities_projected"],
+                    parameters={"output_crs": "EPSG:4326"},
+                    output="facilities_webmap",
+                    expected_output="Web 地图图层",
+                ),
             ],
-            expected_outputs=["米制设施图层"],
+            expected_outputs=["米制设施图层", "Web 地图图层"],
         )
     )
     client = TestClient(create_app(service=service))
@@ -226,6 +305,10 @@ def test_plan_api_approves_executes_and_shows_run(tmp_path: Path) -> None:
     executed = client.post(f"/api/v1/plans/{plan.plan_id}/execute")
     run_id = executed.json()["run_id"]
     shown_run = client.get(f"/api/v1/runs/{run_id}")
+    webmap = client.get(f"/api/v1/runs/{run_id}/artifacts/facilities_webmap")
+    blocked_geopackage = client.get(
+        f"/api/v1/runs/{run_id}/artifacts/facilities_projected"
+    )
 
     assert shown.status_code == 200
     assert shown.json()["status"] == "awaiting_approval"
@@ -237,6 +320,11 @@ def test_plan_api_approves_executes_and_shows_run(tmp_path: Path) -> None:
     assert executed.json()["status"] == "succeeded"
     assert shown_run.status_code == 200
     assert shown_run.json()["steps"][0]["status"] == "succeeded"
+    assert webmap.status_code == 200
+    assert webmap.headers["content-type"].startswith("application/geo+json")
+    assert webmap.json()["type"] == "FeatureCollection"
+    assert blocked_geopackage.status_code == 415
+    assert blocked_geopackage.json()["error"]["code"] == "unsupported_web_artifact"
 
 
 def test_api_refuses_to_approve_legacy_plan_outside_workspace(

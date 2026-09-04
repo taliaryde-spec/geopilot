@@ -312,9 +312,35 @@ Prompt Engineering 主要优化单次指令的措辞和结构；Context Engineer
 
 MCP 位于外部客户端与 GeoPilot 能力之间，提供 tools、resources 和 prompts 的标准发现/调用协议；它不替代模型的 Function Calling、Agent Loop、RAG 或 Memory。GeoPilot 计划先将只读、契约稳定的 `inspect_dataset` 和 `recommend_metric_crs` 发布为本地 MCP Server，并复用现有 Pydantic Schema 与 workspace policy。先完成内部工具、API 和评测，是因为过早发布不稳定工具会把命名、参数和权限问题扩散给外部客户端；写操作要等认证、审计和幂等机制成熟后再开放。
 
-## 十一、简历描述草案
+## 十一、Web GIS 与人机协作界面
 
-实现自然语言驱动的 GeoPilot GIS Agent：设计 Provider-neutral LLM 适配、Pydantic Function Calling、结构化规划与人工审批，使用确定性 GeoPandas Workflow 完成 13 步覆盖分析并支持失败检查点恢复；构建本地引用型 RAG，采用 BGE 中文 Embedding、token 截断护栏及 BM25 + Dense + RRF，在 20 条困难 Query 上取得 Recall@3/MRR/NDCG@3 0.975/0.975/0.9521，并通过实验否决默认启用高延迟 Rerank；实现用户确认型长期记忆、脱敏 Trace 与 workspace 隔离的 FastAPI 接口；建立结果/过程/安全三维 Agent 回归集，真实 DeepSeek V1 的 Task Success/Required Tool Recall/Error Recovery 为 0.75/1.0/1.0，并保留冗余检索失败案例。
+### 72. GeoPilot 的 Web 页面为什么不只是聊天框？
+
+普通聊天框只展示最终文本，用户看不到模型依据、计划副作用和执行状态。GeoPilot 页面把交互拆成数据预检、Agent 回答与工具摘要、结构化计划、风险等级、人工批准/拒绝、显式执行、Run 检查点和 GeoJSON/报告产物。这样 UI 对应真实 Agent 状态机，用户批准的是明确计划而不是笼统地“相信模型”，也能区分模型规划失败、工具失败和 GIS 执行失败。
+
+### 73. 前端如何拿到 Plan ID，为什么不从回答文本中提取？
+
+`AgentRunResponse.plan_ids` 从本轮成功的 `submit_analysis_plan` Tool Result 中读取真实 `plan_id`，再作为结构化 API 字段返回。自然语言回答的措辞、语言和格式可能变化，用正则解析会脆弱，还可能把模型编造的 ID 当成真实状态。结构化 ID 让页面加载的一定是 PlanStore 已持久化的计划，也是 Function Calling 不只用于执行工具、还用于建立可靠产品契约的例子。
+
+### 74. 浏览器如何安全读取 GeoJSON 和报告？
+
+浏览器不接收一个任意本地路径去读文件，而是调用 `run_id + output` 产物路由。服务端先加载 Run，在成功步骤中匹配稳定 output，再把登记路径规范化并验证位于对应 Run 目录，只允许 `.geojson` 和 `.md`。缺失、未就绪、越界、不支持类型分别返回稳定错误；GeoPackage 会得到 415。这样把执行产物能力限制为可审计的 Run 清单，而不是开放文件服务器。
+
+### 75. 如何防止模型回答或数据属性在页面造成 XSS？
+
+Agent 回答、工具错误、Plan 内容和 GeoJSON 属性都属于不可信文本。`src/geopilot/web/app.js` 通过 `textContent` 和 DOM 文本节点渲染，不使用 `innerHTML`；地图 tooltip 也先写入 DOM 元素的 `textContent`。这降低存储型和模型输出型 XSS 风险，但不是完整浏览器安全方案；外部 CDN、CSP、依赖固定、CSRF、认证和安全响应头仍需在部署阶段补齐。
+
+### 76. Web 地图中的 CRS 怎么处理？
+
+空间距离、缓冲和面积计算始终在后端推荐的米制投影 CRS 中进行，最终 `export_geojson` 工具才将展示数据确定性转换为 `EPSG:4326`。Leaflet 只加载这个 Web 互操作产物，不在浏览器重新计算覆盖指标。这样明确区分 analysis CRS 与 display CRS，避免“地图看起来对，所以数值一定对”的常见 GIS 错误。
+
+### 77. 当前 Web GIS 最大的产品缺口是什么？
+
+Agent 和 GIS 执行仍是同步 HTTP，因此页面只能等待最终响应，无法实时显示步骤、取消任务或断线恢复；没有上传安全、多个图层控制、大 GeoJSON 简化/瓦片、浏览器 E2E、认证和无障碍审计。下一步优先做 Job + SSE 和 Playwright 核心流程，因为它们直接改善长任务体验并提供可量化可靠性；地图编辑和视觉特效不是当前首要风险。
+
+## 十二、简历描述草案
+
+实现自然语言驱动的 GeoPilot GIS Agent：设计 Provider-neutral LLM 适配、Pydantic Function Calling、结构化规划与人工审批，使用确定性 GeoPandas Workflow 完成 13 步覆盖分析并支持失败检查点恢复；构建本地引用型 RAG，采用 BGE 中文 Embedding、token 截断护栏及 BM25 + Dense + RRF，在 20 条困难 Query 上取得 Recall@3/MRR/NDCG@3 0.975/0.975/0.9521，并通过实验否决默认启用高延迟 Rerank；实现用户确认型长期记忆、脱敏 Trace、workspace 隔离的 FastAPI，以及展示工具证据、审批、检查点和 GeoJSON 的 Web GIS；建立结果/过程/安全三维 Agent 回归集，真实 DeepSeek V1 的 Task Success/Required Tool Recall/Error Recovery 为 0.75/1.0/1.0，并保留冗余检索失败案例。
 
 ## 迭代记录
 
@@ -375,3 +401,9 @@ MCP 位于外部客户端与 GeoPilot 能力之间，提供 tools、resources �
 - 新增 API/CLI 边界、两层路径穿越防护、服务端模型配置、生产化缺口、Context Engineering、多 Agent 决策和 MCP 发布顺序共 7 道项目化问题。
 - 回答基于 `src/geopilot/api/`、`tests/test_api.py` 的 8 项集成测试、全项目 184 项测试和 `docs/evaluations/API_V1.md`，不把本地同步 API 描述为生产服务。
 - 新增 `AGENT_OPTIMIZATION_AND_CAREER.md`，逐组件记录当前证据、下一步优化、验收指标和面试表达；简历草案只加入已实现的 workspace 隔离 FastAPI。
+
+### 2026-09-04：Web GIS V1
+
+- 新增为什么不是聊天框、结构化 Plan ID、受控产物读取、模型输出 XSS、analysis/display CRS 和产品缺口共 6 道项目化问答。
+- 回答基于 `src/geopilot/web/`、受控产物 API、10 项 API/Web 集成测试、全项目 186 项测试和 `docs/evaluations/WEB_GIS_V1.md`。
+- 简历草案只描述已实现的审批/检查点/GeoJSON 展示，不声称已有异步流式、多租户或生产部署。

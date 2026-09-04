@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="GeoPilot：带人工审批与可解释执行轨迹的地理空间分析 Agent"
+    />
+    <title>GeoPilot · 地理空间分析 Agent</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIINfQ3yn7fJgGfMZ2sF+6htqCQ0b+qXw="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="GeoPilot 首页">
+        <span class="brand-mark" aria-hidden="true">G</span>
+        <span>
+          <strong>GeoPilot</strong>
+          <small>Evidence-led GIS Agent</small>
+        </span>
+      </a>
+      <div class="service-state">
+        <span id="health-dot" class="state-dot"></span>
+        <span id="health-text">正在连接本地服务</span>
+      </div>
+    </header>
+
+    <main class="app-shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Human-in-the-loop spatial intelligence</p>
+          <h1>从自然语言问题，走到<br /><em>可验证的空间结论</em></h1>
+        </div>
+        <p class="hero-copy">
+          大模型负责理解、检索与规划；GeoPandas 工作流负责投影、计算、验证和产物。
+          每项有副作用的分析都必须先展示计划并由你批准。
+        </p>
+      </section>
+
+      <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+
+      <section class="workspace-grid">
+        <div class="control-column">
+          <article class="panel agent-panel">
+            <div class="panel-heading">
+              <span class="step-number">01</span>
+              <div>
+                <p class="section-label">Agent task</p>
+                <h2>描述你的空间分析任务</h2>
+              </div>
+            </div>
+            <label class="sr-only" for="agent-prompt">Agent 任务</label>
+            <textarea id="agent-prompt" rows="7">请分析 examples/data/facilities.csv 和 examples/data/neighborhoods.geojson 的公共服务覆盖情况。检查数据并推荐米制 CRS，然后生成包含完整参数、结果验证、GeoJSON 和 Markdown 报告的可执行计划。只提交计划，不执行。</textarea>
+            <div class="action-row">
+              <button id="run-agent" class="button button-primary" type="button">
+                <span>生成分析计划</span><span aria-hidden="true">→</span>
+              </button>
+              <span class="boundary-note">模型配置仅从服务端读取</span>
+            </div>
+          </article>
+
+          <article class="panel compact-panel">
+            <div class="panel-heading compact-heading">
+              <span class="step-number">00</span>
+              <div>
+                <p class="section-label">Deterministic intake</p>
+                <h2>先做数据预检</h2>
+              </div>
+            </div>
+            <div class="inline-form">
+              <label class="sr-only" for="dataset-source">工作区内数据路径</label>
+              <input
+                id="dataset-source"
+                value="examples/data/facilities.csv"
+                autocomplete="off"
+              />
+              <button id="inspect-dataset" class="button button-secondary" type="button">
+                检查
+              </button>
+            </div>
+            <div id="dataset-result" class="result-placeholder">
+              输入工作区内的 CSV、GeoJSON 或 Shapefile 路径。
+            </div>
+          </article>
+
+          <article id="agent-result-panel" class="panel" hidden>
+            <div class="panel-heading compact-heading">
+              <span class="step-number">02</span>
+              <div>
+                <p class="section-label">Reasoning outcome</p>
+                <h2>Agent 回答与工具证据</h2>
+              </div>
+            </div>
+            <div id="agent-answer" class="answer"></div>
+            <div id="tool-trace" class="tool-trace"></div>
+          </article>
+
+          <article id="plan-panel" class="panel" hidden>
+            <div class="panel-heading compact-heading">
+              <span class="step-number">03</span>
+              <div>
+                <p class="section-label">Human approval gate</p>
+                <h2>审阅结构化计划</h2>
+              </div>
+            </div>
+            <div class="inline-form plan-loader">
+              <label class="sr-only" for="plan-id">Plan ID</label>
+              <input id="plan-id" placeholder="plan_..." autocomplete="off" />
+              <button id="load-plan" class="button button-secondary" type="button">加载</button>
+            </div>
+            <div id="plan-summary"></div>
+            <ol id="plan-steps" class="timeline"></ol>
+            <div id="plan-actions" class="action-row" hidden>
+              <button id="approve-plan" class="button button-primary" type="button">批准计划</button>
+              <button id="reject-plan" class="button button-quiet" type="button">拒绝</button>
+              <button id="execute-plan" class="button button-accent" type="button" hidden>
+                执行确定性工作流
+              </button>
+            </div>
+          </article>
+        </div>
+
+        <aside class="evidence-column">
+          <article class="panel map-panel">
+            <div class="panel-heading compact-heading">
+              <span class="step-number">05</span>
+              <div>
+                <p class="section-label">Validated artifact</p>
+                <h2>GeoJSON 结果地图</h2>
+              </div>
+            </div>
+            <div id="map" aria-label="GeoJSON 结果地图"></div>
+            <div id="map-empty" class="map-empty">
+              <span class="map-crosshair">⌖</span>
+              <strong>等待可视化产物</strong>
+              <small>执行包含 export_geojson 的已批准计划后，地图会在这里加载。</small>
+            </div>
+            <div id="artifact-links" class="artifact-links"></div>
+          </article>
+
+          <article id="run-panel" class="panel" hidden>
+            <div class="panel-heading compact-heading">
+              <span class="step-number">04</span>
+              <div>
+                <p class="section-label">Durable execution</p>
+                <h2>执行检查点</h2>
+              </div>
+            </div>
+            <div id="run-summary"></div>
+            <ol id="run-steps" class="run-list"></ol>
+          </article>
+
+          <article class="panel architecture-card">
+            <p class="section-label">Why this is an Agent system</p>
+            <div class="architecture-flow">
+              <span>LLM 决策</span><i>→</i><span>工具证据</span><i>→</i><span>人工审批</span>
+              <i>→</i><span>GIS 工作流</span><i>→</i><span>验证产物</span>
+            </div>
+            <p>
+              Agent 的自由度止于计划；数值计算和文件写入由可测试、可恢复的确定性工具完成。
+            </p>
+          </article>
+        </aside>
+      </section>
+    </main>
+
+    <footer>
+      <span>GeoPilot v0.1 · Local-first</span>
+      <a href="/docs" target="_blank" rel="noreferrer">OpenAPI 文档 ↗</a>
+    </footer>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

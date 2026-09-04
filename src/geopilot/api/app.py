@@ -1,10 +1,12 @@
 """FastAPI application factory for GeoPilot's local product interface."""
 
+from pathlib import Path as FileSystemPath
 from typing import Annotated
 
 from fastapi import FastAPI, Path, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from geopilot.api.models import (
     AgentRunRequest,
@@ -24,6 +26,9 @@ from geopilot.planning.models import AnalysisPlan
 
 PlanId = Annotated[str, Path(pattern=r"^plan_[A-Za-z0-9_-]+$")]
 RunId = Annotated[str, Path(pattern=r"^run_[A-Za-z0-9_-]+$")]
+OutputId = Annotated[str, Path(pattern=r"^[a-z][a-z0-9_]*$")]
+
+WEB_DIRECTORY = FileSystemPath(__file__).parents[1] / "web"
 
 
 def create_app(
@@ -40,6 +45,11 @@ def create_app(
             "Local-first GIS Agent API. Bind to loopback unless authentication "
             "and deployment hardening have been added."
         ),
+    )
+    application.mount(
+        "/static",
+        StaticFiles(directory=WEB_DIRECTORY),
+        name="static",
     )
 
     @application.exception_handler(ApiServiceError)
@@ -91,6 +101,10 @@ def create_app(
     def health() -> HealthResponse:
         return HealthResponse()
 
+    @application.get("/", include_in_schema=False)
+    def web_app() -> FileResponse:
+        return FileResponse(WEB_DIRECTORY / "index.html", media_type="text/html")
+
     @application.post(
         "/api/v1/datasets/inspect",
         response_model=DatasetIntakeResult,
@@ -130,6 +144,19 @@ def create_app(
     @application.get("/api/v1/runs/{run_id}", response_model=ExecutionRun)
     def show_run(run_id: RunId) -> ExecutionRun:
         return selected_service.show_run(run_id)
+
+    @application.get(
+        "/api/v1/runs/{run_id}/artifacts/{output}",
+        response_class=FileResponse,
+    )
+    def get_run_artifact(run_id: RunId, output: OutputId) -> FileResponse:
+        artifact = selected_service.resolve_run_artifact(run_id, output)
+        media_type = (
+            "application/geo+json"
+            if artifact.suffix.lower() == ".geojson"
+            else "text/markdown"
+        )
+        return FileResponse(artifact, media_type=media_type, filename=artifact.name)
 
     @application.post("/api/v1/runs/{run_id}/resume", response_model=ExecutionRun)
     def resume_run(run_id: RunId) -> ExecutionRun:
