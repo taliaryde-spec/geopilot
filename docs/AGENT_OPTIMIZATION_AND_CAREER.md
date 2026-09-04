@@ -18,8 +18,8 @@ GeoPilot 采用 Agent + Workflow，而不是纯 Agent：LLM 处理自然语言�
 
 | 组件 | 当前真实实现与证据 | 下一步优化 | 验收指标 | 面试/简历可讲点 |
 |---|---|---|---|---|
-| 模型适配 | Provider-neutral `ChatModel`；DeepSeek/OpenRouter Chat Completions、OpenAI Responses；截断/鉴权限流错误边界 | 统一记录 input/output/cache token；按错误类型重试；可选模型路由与熔断，禁止静默换模型 | token/cost 覆盖率 100%；429/timeout/5xx 分类测试；模型路由对照 | 为什么业务层不绑定 SDK；重试哪些错误、为什么不重试 4xx |
-| System Prompt | 版本化 Prompt 0.8.0；工具、CRS、审批、Memory 注入边界 | 按背景/指令/工具/输出拆节；从 Eval 失败驱动修改；增加 Prompt 版本到 Trace；减少可由代码保证的重复规则 | 相同 Case 的回归提升且 token 不增长失控；Prompt 版本可追溯 | Prompt 是软约束，Schema/状态机才是硬边界 |
+| 模型适配 | Provider-neutral `ChatModel`；两类 API；V1 已归一化 input/output/total/cache/reasoning usage | 按错误类型重试；将 usage 写入脱敏 Trace；可选模型路由与熔断 | Prompt 实验 usage 覆盖率 100%；429/timeout/5xx 分类测试 | 为什么业务层不绑定 SDK；缓存 token 与费用如何核算 |
+| System Prompt | minimal/structured/few-shot catalog；6-Case DeepSeek V1；Few-shot 成功率 0.50、违规 0、效率 0.7944，但未升级默认 | 扩展 Case、多次重复/方差；Prompt 版本进 Trace；从重复检索失败驱动修改 | 相同 Case 回归；置信区间；token/质量 Pareto；Prompt 版本可追溯 | Few-shot 为什么有候选收益却不立即上线；Prompt 软约束与硬校验 |
 | Context Engineering | RAG 按需、Memory Top-6/2000 字符、工具结果回到 Working Memory | 工具结果摘要/清理；按任务动态选择工具；长任务 compaction + 结构化 task note；为上下文各来源做 token budget | 平均上下文 token、冗余工具调用和任务成功率对照 | Prompt Engineering 与 Context Engineering 的区别；为什么长上下文不等于高质量 |
 | Agent Loop | `plan/act/observe` 多轮循环；最大 6 轮；结构化 Tool Result | 增加 wall-clock/tool/token 总预算、取消信号、每类错误重试策略、重复/语义重复检测 | 超预算 100% 可终止；取消延迟；循环 Case 通过率 | 如何避免死循环和错误复合；为什么预算应是多维的 |
 | Tool Registry | Pydantic JSON Schema、稳定名称/描述、可恢复错误；API 可注入路径 resolver | 工具能力标签（read/write/high-risk）；动态最小工具集；版本号与 deprecation；输出做 token-efficient 摘要 | 工具选择准确率、参数有效率、平均工具 Schema token | 工具不是 API 列表，而是模型的行动与权限边界 |
@@ -64,8 +64,8 @@ Agent Eval + redacted Trace
 
 这里的顺序按“Agent 学习和求职证据”排列，不按产品功能数量排列：
 
-1. Prompt 与结构化输出实验：比较 Prompt 版本、Few-shot 与代码校验，记录 Schema/工具/任务成功率、token 和延迟。
-2. Function Calling 与工具设计实验：审计工具粒度、Schema、返回值和动态最小工具集。
+1. 已完成 Prompt 与结构化输出实验 V1；证据见 `docs/evaluations/PROMPT_EXPERIMENT_V1.md`。
+2. **当前下一阶段**：Function Calling 与工具设计实验，审计工具粒度、Schema、返回值和动态最小工具集。
 3. Agent 模式实验：同题比较直接 Tool Calling、ReAct、Plan-and-Execute 和一次 Reflection 验证的收益与成本。
 4. RAG 生成侧与 Context Engineering：Query 改写、拒答、上下文预算/压缩、Faithfulness 和引用评估。
 5. MCP：先发布两个只读 GIS 工具，用独立 Client 验证互操作与 workspace 权限。

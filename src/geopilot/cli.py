@@ -20,8 +20,13 @@ from geopilot.agent import (
     build_model,
 )
 from geopilot.agent.models import ToolResult
+from geopilot.agent.prompting import PromptVariant, get_prompt_spec
 from geopilot.agent.tool_adapters import build_default_tool_registry
-from geopilot.evaluation import evaluate_agent, load_agent_evaluation_cases
+from geopilot.evaluation import (
+    evaluate_agent,
+    load_agent_evaluation_cases,
+    run_prompt_experiment,
+)
 from geopilot.execution import (
     ApprovedPlanExecutor,
     ExecutionStatus,
@@ -247,6 +252,66 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Optionally persist the JSON result in addition to printing it.",
+    )
+
+    prompt_experiment_parser = subparsers.add_parser(
+        "prompt-experiment",
+        help="Compare versioned system prompts on the same Agent cases.",
+    )
+    prompt_experiment_parser.add_argument(
+        "cases",
+        nargs="?",
+        type=Path,
+        default=Path("evals") / "prompt_cases_v1.json",
+        help="Version-controlled prompt experiment cases.",
+    )
+    prompt_experiment_parser.add_argument(
+        "--variants",
+        nargs="+",
+        type=PromptVariant,
+        choices=list(PromptVariant),
+        default=list(PromptVariant),
+        help="Prompt variants to compare (default: all three).",
+    )
+    prompt_experiment_parser.add_argument(
+        "--knowledge-index",
+        type=Path,
+        default=DEFAULT_KNOWLEDGE_INDEX,
+        help="Local RAG index required by knowledge cases.",
+    )
+    prompt_experiment_parser.add_argument(
+        "--model-cache",
+        type=Path,
+        default=DEFAULT_MODEL_CACHE,
+        help="Local FastEmbed model cache directory.",
+    )
+    prompt_experiment_parser.add_argument(
+        "--provider",
+        choices=[provider.value for provider in ModelProvider],
+        default=None,
+        help="Override GEOPILOT_PROVIDER for this experiment.",
+    )
+    prompt_experiment_parser.add_argument(
+        "--model",
+        default=None,
+        help="Override GEOPILOT_MODEL for this experiment.",
+    )
+    prompt_experiment_parser.add_argument(
+        "--base-url",
+        default=None,
+        help="Override GEOPILOT_BASE_URL for this experiment.",
+    )
+    prompt_experiment_parser.add_argument(
+        "--max-output-tokens",
+        type=int,
+        default=None,
+        help="Use the same response token limit for every prompt variant.",
+    )
+    prompt_experiment_parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optionally persist the complete JSON comparison.",
     )
 
     show_plan_parser = subparsers.add_parser(
@@ -946,6 +1011,84 @@ def _run_agent_evaluate(
     return EXIT_SUCCESS
 
 
+def _run_prompt_experiment(
+    cases_path: Path,
+    *,
+    variants: list[PromptVariant],
+    provider: str | None,
+    model: str | None,
+    base_url: str | None,
+    max_output_tokens: int | None,
+    knowledge_index: Path,
+    model_cache: Path,
+    output_path: Path | None,
+) -> int:
+    """Compare prompt variants with model, tools, cases, and budgets fixed."""
+    try:
+        cases = load_agent_evaluation_cases(cases_path)
+        if (
+            any("search_knowledge" in case.required_tools for case in cases)
+            and not knowledge_index.is_file()
+        ):
+            raise ValueError(
+                "Prompt experiment requires the RAG index because at least "
+                "one case requires search_knowledge. Run `geopilot rag-build "
+                "knowledge` first."
+            )
+        settings = ModelSettings.from_environment(
+            provider=provider,
+            model=model,
+            base_url=base_url,
+            max_output_tokens=max_output_tokens,
+        )
+        knowledge_retriever = (
+            open_knowledge_retriever(
+                index_path=knowledge_index,
+                cache_directory=model_cache,
+            )
+            if knowledge_index.is_file()
+            else None
+        )
+        specs = [get_prompt_spec(variant) for variant in variants]
+        with TemporaryDirectory(prefix="geopilot-prompt-experiment-") as root:
+            plan_root = Path(root)
+            result = run_prompt_experiment(
+                cases,
+                specs,
+                model_factory=lambda spec: build_model(settings),
+                tool_registry_factory=lambda spec: build_default_tool_registry(
+                    plan_store=PlanStore(plan_root / spec.variant.value),
+                    knowledge_retriever=knowledge_retriever,
+                ),
+                provider=settings.provider.value,
+                model_name=settings.model,
+                max_model_turns=max(case.max_model_turns for case in cases),
+            )
+        payload = result.model_dump_json(indent=2)
+        if output_path is not None:
+            resolved_output = output_path.resolve()
+            resolved_output.parent.mkdir(parents=True, exist_ok=True)
+            resolved_output.write_text(f"{payload}\n", encoding="utf-8")
+    except ModelConfigurationError as error:
+        _print_error("model_configuration_error", str(error))
+        return EXIT_CONFIGURATION_ERROR
+    except ModelRequestError as error:
+        _print_error(error.code, str(error))
+        return EXIT_MODEL_ERROR
+    except (ModelResponseError, AgentProtocolError) as error:
+        _print_error("prompt_experiment_runtime_error", str(error))
+        return EXIT_EVALUATION_ERROR
+    except (EmbeddingError, VectorStoreError) as error:
+        _print_error(error.code.value, str(error))
+        return EXIT_RAG_ERROR
+    except (OSError, RuntimeError, ValueError) as error:
+        _print_error("invalid_prompt_experiment", str(error))
+        return EXIT_EVALUATION_ERROR
+
+    print(payload)
+    return EXIT_SUCCESS
+
+
 def _run_memory_set(
     kind: MemoryKind,
     key: str,
@@ -1397,6 +1540,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.command == "agent-evaluate":
         return _run_agent_evaluate(
             arguments.cases,
+            provider=arguments.provider,
+            model=arguments.model,
+            base_url=arguments.base_url,
+            max_output_tokens=arguments.max_output_tokens,
+            knowledge_index=arguments.knowledge_index,
+            model_cache=arguments.model_cache,
+            output_path=arguments.output,
+        )
+    if arguments.command == "prompt-experiment":
+        return _run_prompt_experiment(
+            arguments.cases,
+            variants=arguments.variants,
             provider=arguments.provider,
             model=arguments.model,
             base_url=arguments.base_url,

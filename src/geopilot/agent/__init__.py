@@ -9,6 +9,7 @@ from geopilot.agent.config import (
 )
 from geopilot.agent.factory import build_model
 from geopilot.agent.openai_responses import OpenAIResponsesModel
+from geopilot.agent.prompting import PromptSpec, PromptVariant, get_prompt_spec
 from geopilot.agent.runner import (
     AgentMaxTurnsError,
     AgentProtocolError,
@@ -26,5 +27,8 @@ __all__ = [
     "ModelSettings",
     "OpenAICompatibleChatModel",
     "OpenAIResponsesModel",
+    "PromptSpec",
+    "PromptVariant",
     "build_model",
+    "get_prompt_spec",
 ]

@@ -6,7 +6,7 @@
 
 本文件只记录已经由源码、测试或真实运行证明的事实；规划中的功能必须明确标记为“未实现”，不能因为出现在路线图里就写成已完成。
 
-这份文档区分“已经形成第一条可运行闭环”和“完整大模型应用的全部组件”。第一条闭环是：自然语言问题 → LLM 规划与工具调用 → 人工审批 → 确定性 GIS 执行 → 验证 → 地图数据与报告。RAG/Embedding、用户确认型长期记忆、Agent Eval V1、脱敏 Trace、本地 FastAPI 和 Web GIS V1 已分别接入；生成答案语义评测、token/成本监控、后台 Job、认证部署和 MCP 仍是后续独立阶段。
+这份文档区分“已经形成第一条可运行闭环”和“完整大模型应用的全部组件”。第一条闭环是：自然语言问题 → LLM 规划与工具调用 → 人工审批 → 确定性 GIS 执行 → 验证 → 地图数据与报告。RAG/Embedding、用户确认型长期记忆、Agent Eval V1、Prompt 对照实验、脱敏 Trace、本地 FastAPI 和 Web GIS V1 已分别接入；生成答案语义评测、持续成本监控、后台 Job、认证部署和 MCP 仍是后续独立阶段。
 
 ## 当前调用链
 
@@ -36,6 +36,7 @@ GeoPackage / GeoJSON / Markdown
 受控 Web 产物路由 → Leaflet GeoJSON 地图 / Markdown 报告链接
 
 旁路质量链路：版本化 Agent Cases → 真实 Agent Run → 结果/过程/安全规则评分
+旁路 Prompt 实验：版本化 Prompt Catalog × 同一 Cases/模型/工具 → 质量/步骤/Token/延迟对照
 旁路观测链路：普通 Agent Run → 脱敏 Trace JSONL → trace-list
 ```
 
@@ -48,7 +49,7 @@ GeoPackage / GeoJSON / Markdown
 | DeepSeek / OpenRouter 适配 | 已完成 | `src/geopilot/agent/chat_completions.py` | 通过 OpenAI-compatible Chat Completions 调用模型与 Tool Calling |
 | OpenAI 适配 | 已完成 | `src/geopilot/agent/openai_responses.py` | 对接 Responses API |
 | 模型工厂 | 已完成 | `src/geopilot/agent/factory.py` | 根据配置选择实际模型适配器 |
-| System Prompt | 已完成，持续迭代 | `src/geopilot/agent/prompts.py` | 定义 GIS 安全规则、规划规则、工具参数和禁止编造约束 |
+| System Prompt | 版本化与对照实验 V1 完成 | `src/geopilot/agent/prompting/` | 集中管理 Prompt 模型、模板和 minimal/structured/few-shot catalog |
 | Agent Loop | 已完成 | `src/geopilot/agent/runner.py` | 维护单次任务消息、循环请求模型、执行工具调用并返回工具结果 |
 | Tool Registry | 已完成 | `src/geopilot/agent/registry.py` | 注册工具定义、校验参数并根据工具名调用 |
 | LLM 工具适配 | 已完成 | `src/geopilot/agent/tool_adapters.py` | 把数据检查、CRS 推荐和计划提交暴露为模型可调用工具 |
@@ -67,7 +68,7 @@ GeoPackage / GeoJSON / Markdown
 | 检索评估 | 已完成第一版 | `src/geopilot/rag/evaluation.py`、`knowledge/retrieval_cases.json` | 按来源、章节、正文标签与相关度等级计算 Precision、Recall、MRR 和 NDCG |
 | Cross-Encoder Rerank | 已实现并完成首轮评估，默认关闭 | `src/geopilot/rag/reranking.py`、`rerank_experiment.py` | 对 Hybrid 候选成对打分；真实实验无收益，因此不替换默认 Hybrid |
 | Long-term Memory | 已完成安全第一版 | `src/geopilot/memory/`、`agent/runner.py`、`cli.py` | 显式确认写入、namespace 隔离、版本/过期/删除、相关召回和可关闭 Prompt 注入 |
-| Agent Eval | 已完成规则评测 V1 | `src/geopilot/evaluation/`、`evals/agent_cases_v1.json` | 评估任务结果、必需/禁用工具、正确失败、步骤效率、重复调用和延迟 |
+| Agent Eval | 规则评测 + Prompt 实验 V1 | `src/geopilot/evaluation/`、`evals/` | 评估任务/工具/正确失败/效率，比较 Prompt 版本并统计 input/output/cache/reasoning tokens |
 | Observability | 已完成脱敏 Trace V1 | `src/geopilot/observability/` | 以 JSONL 保存提示词哈希、轮数、工具元数据、耗时和终态，不保存模型可见正文 |
 | API 集成 | 本地安全边界 V1 完成 | `src/geopilot/api/` | FastAPI/OpenAPI、workspace 路径策略、Agent/计划/执行/Trace 路由与稳定错误 |
 | Web GIS | 本地可交互 V1 完成 | `src/geopilot/web/`、`src/geopilot/api/app.py` | 数据预检、Agent 工具摘要、计划审批、Run 检查点和 GeoJSON 地图 |
@@ -83,9 +84,9 @@ GeoPilot 没有让 LLM 直接执行任意 Python 或任意 GIS 操作。LLM 负�
 
 `agent/client.py` 定义统一模型接口，`chat_completions.py` 适配 DeepSeek/OpenRouter，`openai_responses.py` 适配 OpenAI，`factory.py` 根据配置选择实现。API Key 只从环境变量读取，`.env` 被 Git 忽略。模型供应商变化不会改变 Agent Loop、工具契约或 GIS 业务逻辑。
 
-### 3. 版本化 Prompt 与代码护栏
+### 3. 版本化 Prompt、对照实验与代码护栏
 
-System Prompt 位于 `agent/prompts.py` 并有显式版本。Prompt 0.8.0 负责告诉模型何时检查数据、何时推荐 CRS、何时检索知识、何时提交计划，以及长期记忆只能用于个性化、不能覆盖系统规则和工具事实；关键安全规则还会在 Pydantic Schema、计划语义校验器和执行编译器中再次验证。原因是 Prompt 属于软约束，不能替代代码级权限与数据校验。
+System Prompt 在 `agent/prompting/templates.py` 保存具体模板，`models.py` 定义变体契约，`catalog.py` 将最小规则、当前详细规则和 Few-shot 候选组成可追溯 catalog。Prompt 0.8.0 负责告诉模型何时检查数据、何时推荐 CRS、何时检索知识、何时提交计划；关键安全规则还会在 Pydantic Schema、计划语义校验器和执行编译器中再次验证。V1 用同一模型/工具/6 条 Case 比较三组 Prompt：Few-shot 的 Task Success/Forbidden Violation/Mean Step Efficiency 为 0.50/0/0.7944，但只跑一次且总 Token 高 6.5%，所以暂不替换 structured 默认版。
 
 ### 4. Function Calling 与 Tool Registry
 
@@ -337,3 +338,15 @@ GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和�
 - 学习闭环：每个组件必须同时交付原理、源码、实践、测试、实验指标、失败复盘、双文档、面试回答和简历边界。
 - 总手册：新增 `docs/KAMA_AGENT_GUIDE.md`，逐项映射卡码的 Prompt、Context、Function Calling、Agent 模式、工具、故障、RAG、Memory、Eval、DAG 和 MCP 到 GeoPilot 真实实现与优化实验。
 - 下一步：Prompt 与结构化输出实验 V1；不能因为已有 Prompt 0.8.0 就跳过对照和量化。
+
+### 2026-09-04：Prompt 与结构化输出实验 V1
+
+- 结构：新增 `src/geopilot/agent/prompting/` Prompt catalog，管理 `minimal` 1.0.0、`structured` 0.8.0 和 `structured_few_shot` 0.8.0-fs1；`AgentRunner` 默认仍选择 structured。
+- 评测：新增 `evals/prompt_cases_v1.json`、`run_prompt_experiment` 和 `prompt-experiment` CLI；三组固定同一 DeepSeek 模型、工具、RAG 索引、6 条 Case、轮数和输出预算。
+- Usage：DeepSeek/OpenRouter Chat Completions 和 OpenAI Responses 都归一化为 `ModelUsage`，Runner 累加多轮 input/output/total/cache/reasoning tokens；提供商不返回时保留 usage 覆盖率而不伪造 0 成本。
+- 失败边界：供应商 Tool Call JSON 损坏时，Eval 将单 Case 记为失败和一次无效参数尝试，不再让整场实验中止。
+- 真实结果：Task Success 为 0.3333/0.3333/0.5000，Forbidden Violation 为 0.1667/0.1667/0，Mean Step Efficiency 为 0.5278/0.6278/0.7944，总 Token 为 65,798/72,812/77,556；usage 覆盖率全部为 1.0。
+- 诊断：三组 Required Tool Recall 都为 1.0，但会重复检索或超预算；Schema Valid 都为 1.0，但计划仍可被领域语义校验拒绝。它们分别证明“调对工具 ≠ 过程高效”和“JSON 合法 ≠ 业务正确”。
+- 决策：Few-shot 是候选但不升级默认；6 条 Case × 1 次无法排除随机性，下轮需扩充 Case、多次重复并报告方差。
+- 自动化：`tests/test_prompt_experiment.py` 及适配器/Runner/Eval/CLI 回归覆盖 Prompt 选择、Token 归一化、多轮累加、损坏 JSON 和控制变量；全项目 194 项测试通过，Ruff/格式/Pyright 全通过。
+- 证据：`docs/evaluations/PROMPT_EXPERIMENT_V1.md`；下一阶段是 Function Calling 与工具设计实验，包括全量工具与动态最小工具集对照。

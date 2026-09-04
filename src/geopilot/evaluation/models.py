@@ -1,8 +1,11 @@
 """Validated contracts for end-to-end GeoPilot Agent evaluation."""
 
+from datetime import datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, Field, model_validator
+
+from geopilot.agent.prompting import PromptVariant
 
 
 class ExpectedTaskOutcome(StrEnum):
@@ -67,9 +70,16 @@ class AgentCaseEvaluation(BaseModel):
     step_efficiency: float = Field(ge=0, le=1)
     forbidden_tool_call_count: int = Field(ge=0)
     duplicate_tool_call_count: int = Field(ge=0)
+    invalid_tool_argument_count: int = Field(default=0, ge=0)
     missing_answer_requirements: list[str]
     missing_expected_error_codes: list[str]
     runtime_error: str | None = None
+    usage_reported: bool = False
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    total_tokens: int = Field(default=0, ge=0)
+    cached_input_tokens: int = Field(default=0, ge=0)
+    reasoning_tokens: int = Field(default=0, ge=0)
 
 
 class AgentEvaluationResult(BaseModel):
@@ -84,10 +94,50 @@ class AgentEvaluationResult(BaseModel):
     error_recovery_rate: float = Field(ge=0, le=1)
     mean_required_tool_recall: float = Field(ge=0, le=1)
     tool_call_success_rate: float = Field(ge=0, le=1)
+    tool_argument_valid_rate: float = Field(default=1, ge=0, le=1)
     forbidden_tool_violation_rate: float = Field(ge=0, le=1)
     duplicate_tool_call_rate: float = Field(ge=0, le=1)
     mean_step_efficiency: float = Field(ge=0, le=1)
     mean_model_turns: float = Field(ge=0)
     mean_tool_calls: float = Field(ge=0)
     total_duration_ms: float = Field(ge=0)
+    usage_coverage_rate: float = Field(default=0, ge=0, le=1)
+    total_input_tokens: int = Field(default=0, ge=0)
+    total_output_tokens: int = Field(default=0, ge=0)
+    total_tokens: int = Field(default=0, ge=0)
+    total_cached_input_tokens: int = Field(default=0, ge=0)
+    total_reasoning_tokens: int = Field(default=0, ge=0)
     cases: list[AgentCaseEvaluation] = Field(min_length=1)
+
+
+class PromptVariantEvaluation(BaseModel):
+    """Prompt metadata and Agent scores for one controlled variant."""
+
+    variant: PromptVariant
+    prompt_version: str
+    description: str
+    includes_few_shot: bool
+    system_prompt_characters: int = Field(ge=1)
+    system_prompt_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    evaluation: AgentEvaluationResult
+
+
+class PromptExperimentResult(BaseModel):
+    """Comparable prompt candidates evaluated under shared conditions."""
+
+    schema_version: str = "1.0"
+    created_at: datetime
+    provider: str = Field(min_length=1)
+    model_name: str = Field(min_length=1)
+    case_count: int = Field(ge=1)
+    controlled_variables: list[str] = Field(min_length=1)
+    variants: list[PromptVariantEvaluation] = Field(min_length=2)
+
+    @model_validator(mode="after")
+    def require_unique_variants(self) -> "PromptExperimentResult":
+        names = [item.variant for item in self.variants]
+        if len(names) != len(set(names)):
+            raise ValueError("Prompt experiment variants must be unique.")
+        if any(item.evaluation.case_count != self.case_count for item in self.variants):
+            raise ValueError("Every prompt variant must evaluate the same case count.")
+        return self

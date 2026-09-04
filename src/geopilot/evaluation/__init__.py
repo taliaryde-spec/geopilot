@@ -10,7 +10,10 @@ from geopilot.evaluation.models import (
     AgentEvaluationResult,
     ExpectedTaskOutcome,
     ObservedTaskOutcome,
+    PromptExperimentResult,
+    PromptVariantEvaluation,
 )
+from geopilot.evaluation.prompt_experiment import run_prompt_experiment
 
 __all__ = [
     "AgentCaseEvaluation",
@@ -18,6 +21,9 @@ __all__ = [
     "AgentEvaluationResult",
     "ExpectedTaskOutcome",
     "ObservedTaskOutcome",
+    "PromptExperimentResult",
+    "PromptVariantEvaluation",
     "evaluate_agent",
     "load_agent_evaluation_cases",
+    "run_prompt_experiment",
 ]

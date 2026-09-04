@@ -29,6 +29,7 @@ from geopilot.agent.config import ModelConfigurationError, ModelSettings
 from geopilot.agent.models import (
     AgentMessage,
     ModelResponse,
+    ModelUsage,
     ToolCall,
     ToolDefinition,
 )
@@ -159,7 +160,27 @@ class OpenAICompatibleChatModel:
             if isinstance(tool_call, ChatCompletionMessageFunctionToolCall)
         ]
         content = message.content.strip() if message.content else None
-        return ModelResponse(content=content or None, tool_calls=tool_calls)
+        return ModelResponse(
+            content=content or None,
+            tool_calls=tool_calls,
+            usage=_normalize_usage(response),
+        )
+
+
+def _normalize_usage(response: Any) -> ModelUsage | None:
+    """Normalize optional Chat Completions usage without assuming a provider."""
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    prompt_details = getattr(usage, "prompt_tokens_details", None)
+    completion_details = getattr(usage, "completion_tokens_details", None)
+    return ModelUsage(
+        input_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+        output_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+        total_tokens=int(getattr(usage, "total_tokens", 0) or 0),
+        cached_input_tokens=int(getattr(prompt_details, "cached_tokens", 0) or 0),
+        reasoning_tokens=int(getattr(completion_details, "reasoning_tokens", 0) or 0),
+    )
 
 
 def _build_message(message: AgentMessage) -> ChatCompletionMessageParam:

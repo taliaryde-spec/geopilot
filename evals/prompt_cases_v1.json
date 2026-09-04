@@ -1,0 +1,58 @@
+[
+  {
+    "case_id": "inspect_facilities",
+    "prompt": "请检查 examples/data/facilities.csv，告诉我数据能否继续分析。",
+    "required_tools": ["inspect_dataset"],
+    "forbidden_tools": ["recommend_metric_crs", "submit_analysis_plan"],
+    "required_answer_contains": ["5", "EPSG:4326"],
+    "max_model_turns": 2,
+    "max_tool_calls": 1
+  },
+  {
+    "case_id": "recommend_metric_crs",
+    "prompt": "examples/data/facilities.csv 适合用哪个投影坐标系做米制距离分析？请说明依据。",
+    "required_tools": ["inspect_dataset", "recommend_metric_crs"],
+    "forbidden_tools": ["submit_analysis_plan"],
+    "required_answer_contains": ["EPSG:32651"],
+    "max_model_turns": 3,
+    "max_tool_calls": 2
+  },
+  {
+    "case_id": "ground_crs_answer",
+    "prompt": "为什么不能在 EPSG:4326 下直接做以米为单位的缓冲区？请依据项目规范回答。",
+    "required_tools": ["search_knowledge"],
+    "forbidden_tools": ["inspect_dataset", "recommend_metric_crs", "submit_analysis_plan"],
+    "required_answer_contains": ["EPSG:4326"],
+    "max_model_turns": 2,
+    "max_tool_calls": 1
+  },
+  {
+    "case_id": "missing_dataset",
+    "prompt": "请检查 examples/data/does_not_exist.geojson 是否能用于分析。",
+    "expected_outcome": "correct_failure",
+    "required_tools": ["inspect_dataset"],
+    "forbidden_tools": ["recommend_metric_crs", "submit_analysis_plan"],
+    "required_answer_contains": ["does_not_exist.geojson"],
+    "expected_tool_error_codes": ["tool_execution_error"],
+    "max_model_turns": 2,
+    "max_tool_calls": 1
+  },
+  {
+    "case_id": "submit_buffer_plan",
+    "prompt": "请为 examples/data/facilities.csv 设计按 service_radius_m 生成服务区并导出 GeoJSON 的可执行分析计划。只提交计划，不执行。",
+    "required_tools": ["inspect_dataset", "recommend_metric_crs", "submit_analysis_plan"],
+    "forbidden_tools": [],
+    "required_answer_contains": ["plan_", "awaiting_approval"],
+    "max_model_turns": 5,
+    "max_tool_calls": 4
+  },
+  {
+    "case_id": "direct_project_answer",
+    "prompt": "用一句话说明 GeoPilot 项目的核心目标，不需要读取数据或执行分析。",
+    "required_tools": [],
+    "forbidden_tools": ["inspect_dataset", "search_knowledge", "recommend_metric_crs", "submit_analysis_plan"],
+    "required_answer_contains": ["GeoPilot"],
+    "max_model_turns": 1,
+    "max_tool_calls": 0
+  }
+]

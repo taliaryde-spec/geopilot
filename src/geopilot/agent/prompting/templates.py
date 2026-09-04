@@ -1,4 +1,4 @@
-"""Versioned prompts that define GeoPilot's behavior and safety rules."""
+"""Concrete prompt templates that define GeoPilot behavior and safety."""
 
 PROMPT_VERSION = "0.8.0"
 

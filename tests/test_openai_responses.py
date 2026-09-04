@@ -4,6 +4,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -26,6 +27,7 @@ from geopilot.agent.openai_responses import (
 class FakeResponse:
     output_text: str
     output: list[ResponseFunctionToolCall]
+    usage: Any | None = None
 
 
 class FakeResponsesResource:
@@ -221,6 +223,33 @@ def test_adapter_translates_tools_and_normalizes_function_call() -> None:
             arguments={"source": "data.geojson"},
         )
     ]
+
+
+def test_responses_adapter_normalizes_optional_token_usage() -> None:
+    provider_response = FakeResponse(
+        output_text="完成。",
+        output=[],
+        usage=SimpleNamespace(
+            input_tokens=80,
+            output_tokens=12,
+            total_tokens=92,
+            input_tokens_details=SimpleNamespace(cached_tokens=10),
+            output_tokens_details=SimpleNamespace(reasoning_tokens=5),
+        ),
+    )
+    model = OpenAIResponsesModel(
+        _settings(),
+        client=FakeOpenAIClient([provider_response]),
+    )
+
+    response = model.complete([AgentMessage(role="user", content="测试")], [])
+
+    assert response.usage is not None
+    assert response.usage.input_tokens == 80
+    assert response.usage.output_tokens == 12
+    assert response.usage.total_tokens == 92
+    assert response.usage.cached_input_tokens == 10
+    assert response.usage.reasoning_tokens == 5
 
 
 def test_adapter_returns_function_result_to_model() -> None:

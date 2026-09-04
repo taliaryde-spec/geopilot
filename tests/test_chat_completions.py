@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -30,6 +31,7 @@ class FakeChoice:
 @dataclass
 class FakeChatCompletion:
     choices: list[FakeChoice]
+    usage: Any | None = None
 
 
 class FakeCompletionsResource:
@@ -131,6 +133,32 @@ def test_adapter_translates_tool_schema_and_normalizes_call() -> None:
             arguments={"source": "data.geojson"},
         )
     ]
+
+
+def test_adapter_normalizes_optional_token_usage() -> None:
+    provider_response = FakeChatCompletion(
+        choices=[FakeChoice(message=FakeMessage(content="完成。"))],
+        usage=SimpleNamespace(
+            prompt_tokens=120,
+            completion_tokens=15,
+            total_tokens=135,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=30),
+            completion_tokens_details=SimpleNamespace(reasoning_tokens=4),
+        ),
+    )
+    model = OpenAICompatibleChatModel(
+        _settings(),
+        client=FakeClient([provider_response]),
+    )
+
+    response = model.complete([AgentMessage(role="user", content="测试")], [])
+
+    assert response.usage is not None
+    assert response.usage.input_tokens == 120
+    assert response.usage.output_tokens == 15
+    assert response.usage.total_tokens == 135
+    assert response.usage.cached_input_tokens == 30
+    assert response.usage.reasoning_tokens == 4
 
 
 def test_adapter_returns_assistant_call_and_tool_result_to_provider() -> None:

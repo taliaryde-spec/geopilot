@@ -12,7 +12,7 @@ GeoPilot 后续大模型部分以[卡码大模型学习路线](https://notes.kam
 
 | 顺序 | 学习组件 | GeoPilot 当前基础 | 下一次实践与实验 | 必须形成的面试证据 |
 |---|---|---|---|---|
-| 1 | Prompt、模型调用、结构化输出 | Prompt 0.8.0、Pydantic Schema、三类模型适配已存在 | 建立 Prompt Case；对比基础版、结构化规则版和少量示例版；统计 Schema 成功率、工具选择率、任务成功率、token、延迟 | Prompt 的组成；Few-shot 何时有效；Prompt 软约束与代码硬约束；截断、重试、温度和输出预算 |
+| 1 | Prompt、模型调用、结构化输出 | **V1 已完成**：Prompt catalog、6 条 Case、三组 DeepSeek 对照、usage 归一化 | 扩展 Case 并每组重复多次；将 Prompt/tool 版本和 Token 写入 Trace | Few-shot 提升但未盲目上线；Prompt 软约束与 Schema/语义校验硬约束；Token/延迟/成本取舍 |
 | 2 | Function Calling 与工具设计 | Agent Loop、Tool Registry、GIS/RAG/Plan 工具已存在 | 审计工具粒度、名称、描述、参数和返回值；比较全量工具与按任务最小工具集 | 一次 Function Calling 完整消息流；参数 Schema；工具错误；为什么工具也是权限边界 |
 | 3 | Agent 模式 | 当前 Loop 属于工具调用型 ReAct，另有 Plan-and-Execute Workflow | 用同一 GIS 任务比较直接工具调用、Plan-and-Execute、带一次验证的 Reflection；不要求模型输出隐藏思维链 | 三种模式的适用场景、成本、延迟、失败模式；为什么 GeoPilot 采用 Agent + Workflow |
 | 4 | RAG 与 Agentic RAG | Chunking、BGE Embedding、Dense/BM25/RRF、可选 Rerank 和检索评测已存在 | 补 Query 改写/拒答/Context 压缩对照；增加答案 Faithfulness、Citation Precision 与无答案集 | Chunk/Embedding/向量库/Hybrid/Rerank；召回问题与生成问题如何定位 |
@@ -22,7 +22,7 @@ GeoPilot 后续大模型部分以[卡码大模型学习路线](https://notes.kam
 | 8 | Memory 与 Eval | 四层状态边界、确认型长期记忆、规则 Eval 和脱敏 Trace 已存在 | 扩大黄金集；增加记忆冲突/污染评测、独立生成 Judge、token/成本和版本对照 | Memory/RAG/Session 区别；结果/过程/安全评测；LLM Judge 的偏差 |
 | 9 | 产品部署支线 | FastAPI + Web GIS V1 已完成 | 等核心组件补齐后再做 Job/SSE、数据库、认证、Docker 和 CI/CD | 能说明同步/异步、TTFT/TPOT/吞吐，但不抢占 Agent 学习主线 |
 
-下一阶段固定为“Prompt 与结构化输出实验 V1”，而不是 Job + SSE。每个阶段都按“先讲原理 → 指出现有源码 → 编写或修改代码 → 跑控制变量实验 → 分析失败 → 更新双文档 → 形成简历/面试表述”推进。
+Prompt 与结构化输出实验 V1 已完成；当前下一阶段固定为“Function Calling 与工具设计实验”，优先比较全量工具和按任务动态最小工具集，同时回应本次 Token 与冗余调用问题。每个阶段都按“先讲原理 → 指出源码 → 修改代码 → 跑实验 → 分析失败 → 更新双文档 → 形成简历/面试表述”推进。
 
 ## 每一步的完成标准
 
@@ -40,7 +40,7 @@ GeoPilot 后续大模型部分以[卡码大模型学习路线](https://notes.kam
 
 | 教程主题 | GeoPilot 对应实现 | 当前状态 | 后续证据 |
 |---|---|---|---|
-| Prompt 与模型调用 | `agent/prompts.py`、模型适配器、Pydantic Tool Schema | 基础闭环完成 | Prompt 版本、结构化输出失败率、token/延迟统计 |
+| Prompt 与模型调用 | `agent/prompting/`、模型适配器、`evaluation/prompt_experiment.py` | V1 已完成 | 6 条 Case、3 组 Prompt、Task Success/Schema/工具/步骤/Token/延迟指标；Few-shot 暂不升级默认 |
 | Function Calling | Tool Registry、数据检查、CRS、计划提交、知识检索 | 已实测 | DeepSeek 多轮工具调用、错误纠正轨迹 |
 | RAG 离线链路 | 文档加载、结构感知切块、同模型 tokenizer 检查、Embedding、索引 | 第一版完成 | 3 文档、19 chunks、512 维索引；超限构建前失败 |
 | RAG 在线链路 | Query Embedding、Dense + BM25、RRF、可选 Cross-Encoder、引用、Agent 工具 | 检索侧完成 | Dense/Hybrid/Rerank 对照与章节级黄金集 |
@@ -68,7 +68,7 @@ GeoPilot 后续大模型部分以[卡码大模型学习路线](https://notes.kam
 
 Memory V1 已完成：区分 Working Memory、Plan/Run Session State、Long-term Memory 与 RAG；只允许用户确认的三类稳定信息，并实现作用域、更新、过期、删除、相关召回和 `--no-memory`。
 
-Agent Eval 与可观测性 V1 也已完成：`evals/agent_cases_v1.json` 用 4 条任务分别检查正常数据、组合工具、RAG 和正确失败；真实 DeepSeek 的 Task Success、Required Tool Recall、Error Recovery 为 0.75/1.0/1.0。唯一失败是二次检索超过步骤预算。普通 Agent 默认写入不含 Prompt/参数/输出正文的脱敏 JSONL Trace。
+Agent Eval 与可观测性 V1 也已完成：4 条通用 Agent Case 的真实 DeepSeek Task Success/Required Tool Recall/Error Recovery 为 0.75/1.0/1.0。Prompt V1 又用 6 条任务比较三组系统提示，Few-shot 的 Task Success/Forbidden Violation/Step Efficiency 为 0.50/0/0.7944，但只跑一次且 Token 增长，暂不替换默认。普通 Agent 默认写入不含 Prompt/参数/输出正文的脱敏 JSONL Trace。
 
 本地 FastAPI 与 Web GIS V1 已完成：`src/geopilot/api/` 将 Dataset、Agent、Plan、Run 和 Trace 暴露为版本化 JSON API，并把请求路径、模型生成的工具路径、旧计划审批和执行目录统一限制在 workspace；`src/geopilot/web/` 展示工具证据、结构化计划、人工审批、Run 检查点和受控 GeoJSON。10 项 API/Web 集成测试通过。它仍是同步、无认证的 loopback 产品入口，下一步是后台 Job/SSE、浏览器 E2E 与安全部署能力。
 

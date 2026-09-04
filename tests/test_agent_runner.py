@@ -8,6 +8,7 @@ import pytest
 from geopilot.agent.models import (
     AgentMessage,
     ModelResponse,
+    ModelUsage,
     ToolCall,
     ToolDefinition,
 )
@@ -381,3 +382,39 @@ def test_agent_stops_after_maximum_model_turns() -> None:
 
     with pytest.raises(AgentMaxTurnsError, match="limit of 2"):
         runner.run("持续调用工具")
+
+
+def test_agent_aggregates_usage_across_model_turns() -> None:
+    model = ScriptedChatModel(
+        [
+            ModelResponse(
+                tool_calls=[ToolCall(id="call-1", name="missing_tool")],
+                usage=ModelUsage(
+                    input_tokens=100,
+                    output_tokens=10,
+                    total_tokens=110,
+                    cached_input_tokens=20,
+                ),
+            ),
+            ModelResponse(
+                content="工具不存在，已停止。",
+                usage=ModelUsage(
+                    input_tokens=140,
+                    output_tokens=8,
+                    total_tokens=148,
+                    reasoning_tokens=3,
+                ),
+            ),
+        ]
+    )
+
+    result = AgentRunner(model, build_default_tool_registry()).run("测试用量")
+
+    assert result.usage == ModelUsage(
+        input_tokens=240,
+        output_tokens=18,
+        total_tokens=258,
+        cached_input_tokens=20,
+        reasoning_tokens=3,
+    )
+    assert result.usage_reported_turns == 2

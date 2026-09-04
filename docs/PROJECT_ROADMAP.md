@@ -38,7 +38,7 @@ Evaluation / Tracing / Storage / Deployment / MCP
 | 7 | Approved Plan Executor | 已完成 | 稳定产物 ID、严格参数契约、依赖编译、运行存储、工具调度、失败停止、检查点恢复与 CLI |
 | 8 | RAG 与 Embedding | 检索侧阶段完成 | 已完成结构感知切块、token 超限护栏、FastEmbed、BM25、RRF、20 条困难集、可选 Cross-Encoder 与控制变量实验；Rerank 实测无收益故默认关闭，生成侧评估并入阶段 10 |
 | 9 | Memory | 安全第一版完成 | 已区分 Working Memory、Session State、Long-term Memory 与 RAG；实现用户确认写入、namespace、revision、过期、删除、相关召回、Prompt 边界与关闭开关 |
-| 10 | Eval 与可观测性 | 规则评测与脱敏 Trace V1 完成 | 已有 4 条版本化 Agent Case、任务/工具/正确失败/步骤/安全指标和 JSONL Trace；生成忠实度 Judge、token/成本、集中监控待补 |
+| 10 | Eval 与可观测性 | 规则评测、Prompt 实验与脱敏 Trace V1 完成 | 已有 4 条 Agent Case、6 条 Prompt Case、三组 Prompt 对照、Token usage 及 JSONL Trace；生成忠实度 Judge、多次方差和集中监控待补 |
 | 11 | 产品与部署 | FastAPI + Web GIS V1 完成 | 已实现 workspace 隔离 API、结构化 Plan ID、审批/检查点/受控产物地图和 10 项 API/Web 测试；后台 Job、上传、数据库、认证、Docker、CI/CD 待补 |
 | 12 | MCP | 待开始 | 将稳定 GIS 工具发布为可复用 MCP Server |
 
@@ -58,8 +58,8 @@ Evaluation / Tracing / Storage / Deployment / MCP
 
 新的核心顺序是：
 
-1. Prompt、模型调用与结构化输出控制变量实验；
-2. Function Calling 与工具设计优化；
+1. Prompt、模型调用与结构化输出控制变量实验（V1 已完成）；
+2. Function Calling 与工具设计优化（当前下一阶段）；
 3. ReAct、Plan-and-Execute、Reflection 的同题对比；
 4. RAG 生成质量与 Context Engineering；
 5. 只读 GIS MCP Server 与独立 Client 验证；

@@ -4,9 +4,12 @@ import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from time import perf_counter
+from typing import TypedDict
 
 from pydantic import TypeAdapter, ValidationError
 
+from geopilot.agent.client import ModelResponseError
+from geopilot.agent.models import ModelUsage
 from geopilot.agent.runner import (
     AgentMaxTurnsError,
     AgentProtocolError,
@@ -19,6 +22,17 @@ from geopilot.evaluation.models import (
     ExpectedTaskOutcome,
     ObservedTaskOutcome,
 )
+
+
+class _UsageFields(TypedDict):
+    """Precisely typed keyword fields passed into one case score."""
+
+    usage_reported: bool
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    cached_input_tokens: int
+    reasoning_tokens: int
 
 
 def load_agent_evaluation_cases(
@@ -69,6 +83,7 @@ def evaluate_agent(
                         if result.error_code is not None
                     ],
                     duration_ms=duration_ms,
+                    usage=run.usage,
                 )
             )
         except AgentMaxTurnsError as error:
@@ -82,6 +97,12 @@ def evaluate_agent(
                     tool_names=tool_names,
                     duplicate_count=duplicate_count,
                     runtime_error=str(error),
+                    usage=error.usage,
+                    tool_error_codes=[
+                        result.error_code
+                        for result in error.tool_results
+                        if result.error_code is not None
+                    ],
                 )
             )
         except AgentProtocolError as error:
@@ -94,6 +115,23 @@ def evaluate_agent(
                     tool_names=[],
                     duplicate_count=0,
                     runtime_error=str(error),
+                    usage=None,
+                    tool_error_codes=[],
+                )
+            )
+        except ModelResponseError as error:
+            duration_ms = max(0.0, (timer() - started) * 1000)
+            results.append(
+                _runtime_failure(
+                    case,
+                    duration_ms=duration_ms,
+                    model_turns=1,
+                    tool_names=[],
+                    duplicate_count=0,
+                    runtime_error=str(error),
+                    usage=None,
+                    tool_error_codes=[],
+                    invalid_tool_argument_count=1,
                 )
             )
     return _aggregate(provider, model_name, results)
@@ -108,6 +146,7 @@ def _score_completed_run(
     tool_successes: list[bool],
     tool_error_codes: list[str],
     duration_ms: float,
+    usage: ModelUsage | None,
 ) -> AgentCaseEvaluation:
     tool_names, duplicate_count = _tool_trace(messages)
     required_present = set(case.required_tools) & set(tool_names)
@@ -166,8 +205,10 @@ def _score_completed_run(
         step_efficiency=step_efficiency,
         forbidden_tool_call_count=forbidden_count,
         duplicate_tool_call_count=duplicate_count,
+        invalid_tool_argument_count=tool_error_codes.count("invalid_tool_arguments"),
         missing_answer_requirements=missing_answers,
         missing_expected_error_codes=missing_errors,
+        **_usage_fields(usage),
     )
 
 
@@ -179,6 +220,9 @@ def _runtime_failure(
     tool_names: list[str],
     duplicate_count: int,
     runtime_error: str,
+    usage: ModelUsage | None,
+    tool_error_codes: list[str],
+    invalid_tool_argument_count: int | None = None,
 ) -> AgentCaseEvaluation:
     required_present = set(case.required_tools) & set(tool_names)
     recall = (
@@ -200,10 +244,36 @@ def _runtime_failure(
             name in case.forbidden_tools for name in tool_names
         ),
         duplicate_tool_call_count=duplicate_count,
+        invalid_tool_argument_count=(
+            invalid_tool_argument_count
+            if invalid_tool_argument_count is not None
+            else tool_error_codes.count("invalid_tool_arguments")
+        ),
         missing_answer_requirements=case.required_answer_contains,
         missing_expected_error_codes=case.expected_tool_error_codes,
         runtime_error=runtime_error,
+        **_usage_fields(usage),
     )
+
+
+def _usage_fields(usage: ModelUsage | None) -> _UsageFields:
+    if usage is None:
+        return {
+            "usage_reported": False,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "cached_input_tokens": 0,
+            "reasoning_tokens": 0,
+        }
+    return {
+        "usage_reported": True,
+        "input_tokens": usage.input_tokens,
+        "output_tokens": usage.output_tokens,
+        "total_tokens": usage.total_tokens,
+        "cached_input_tokens": usage.cached_input_tokens,
+        "reasoning_tokens": usage.reasoning_tokens,
+    }
 
 
 def _tool_trace(messages: Sequence[object]) -> tuple[list[str], int]:
@@ -235,6 +305,14 @@ def _aggregate(
         result.tool_call_success_rate * result.tool_call_count for result in results
     )
     total_duplicates = sum(result.duplicate_tool_call_count for result in results)
+    total_invalid_arguments = sum(
+        result.invalid_tool_argument_count for result in results
+    )
+    unparsed_argument_attempts = sum(
+        max(0, result.invalid_tool_argument_count - result.tool_call_count)
+        for result in results
+    )
+    total_argument_attempts = total_calls + unparsed_argument_attempts
     recovery_cases = [
         result
         for result in results
@@ -270,6 +348,11 @@ def _aggregate(
         tool_call_success_rate=(
             total_successful_calls / total_calls if total_calls else 1.0
         ),
+        tool_argument_valid_rate=(
+            1 - (total_invalid_arguments / total_argument_attempts)
+            if total_argument_attempts
+            else 1.0
+        ),
         forbidden_tool_violation_rate=(
             sum(result.forbidden_tool_call_count > 0 for result in results) / count
         ),
@@ -282,5 +365,11 @@ def _aggregate(
         mean_model_turns=sum(result.model_turns for result in results) / count,
         mean_tool_calls=total_calls / count,
         total_duration_ms=sum(result.duration_ms for result in results),
+        usage_coverage_rate=sum(result.usage_reported for result in results) / count,
+        total_input_tokens=sum(result.input_tokens for result in results),
+        total_output_tokens=sum(result.output_tokens for result in results),
+        total_tokens=sum(result.total_tokens for result in results),
+        total_cached_input_tokens=sum(result.cached_input_tokens for result in results),
+        total_reasoning_tokens=sum(result.reasoning_tokens for result in results),
         cases=results,
     )

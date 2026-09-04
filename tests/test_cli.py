@@ -10,7 +10,7 @@ from shapely.geometry import Point, Polygon
 
 import geopilot.cli as cli_module
 from geopilot.agent.config import ModelSettings
-from geopilot.agent.models import ModelResponse, ToolCall
+from geopilot.agent.models import ModelResponse, ModelUsage, ToolCall
 from geopilot.cli import (
     EXIT_AGENT_ERROR,
     EXIT_CONFIGURATION_ERROR,
@@ -333,6 +333,69 @@ def test_main_evaluates_agent_without_network(
     assert captured.err == ""
     assert payload["task_success_rate"] == 1.0
     assert payload["case_count"] == 1
+    assert json.loads(output_path.read_text(encoding="utf-8")) == payload
+
+
+def test_main_compares_prompt_variants_without_network(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class FakeModel:
+        def complete(self, messages: object, tools: object) -> ModelResponse:
+            return ModelResponse(
+                content="Prompt 评测完成。",
+                usage=ModelUsage(input_tokens=30, output_tokens=5, total_tokens=35),
+            )
+
+    cases_path = tmp_path / "prompt-cases.json"
+    cases_path.write_text(
+        json.dumps(
+            [
+                {
+                    "case_id": "answer_only",
+                    "prompt": "直接回答",
+                    "required_answer_contains": ["完成"],
+                    "max_model_turns": 1,
+                    "max_tool_calls": 0,
+                }
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "prompt-result.json"
+    monkeypatch.setenv("GEOPILOT_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("GEOPILOT_MODEL", "test-model")
+    monkeypatch.setattr(cli_module, "build_model", lambda settings: FakeModel())
+
+    exit_code = main(
+        [
+            "prompt-experiment",
+            str(cases_path),
+            "--variants",
+            "minimal",
+            "structured",
+            "--knowledge-index",
+            str(tmp_path / "missing-index.json"),
+            "--output",
+            str(output_path),
+        ]
+    )
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == EXIT_SUCCESS
+    assert captured.err == ""
+    assert [item["variant"] for item in payload["variants"]] == [
+        "minimal",
+        "structured",
+    ]
+    assert all(
+        item["evaluation"]["task_success_rate"] == 1.0 for item in payload["variants"]
+    )
+    assert all(item["evaluation"]["total_tokens"] == 35 for item in payload["variants"])
     assert json.loads(output_path.read_text(encoding="utf-8")) == payload
 
 

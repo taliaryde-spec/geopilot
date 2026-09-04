@@ -30,7 +30,7 @@ API Key 只从环境变量或本地 `.env` 读取，`.env` 被 Git 忽略；源�
 
 ### 6. Prompt 怎么设计？
 
-System Prompt 采用显式规则和版本号，规定数据事实必须来自工具、距离分析前必须调用 CRS 推荐、执行型任务必须先提交计划、RAG 引用必须原样保留。Prompt 只承担行为引导；关键约束同时在 Pydantic Schema、语义校验器、状态机和执行编译器实现，因为 Prompt 不能作为安全边界。
+System Prompt 采用显式规则和版本号，`agent/prompting/` 管理 minimal、structured 和 structured_few_shot 三组候选。V1 固定 DeepSeek、工具、RAG 索引与 6 条 Case；Few-shot 的 Task Success 为 0.50，高于另两组的 0.3333，并将禁用工具违规降为 0，但 Token 增长约 6.5% 且只运行一次，因此暂不升级默认。Prompt 只承担行为引导；关键约束同时在 Pydantic Schema、语义校验器、状态机和执行编译器实现。
 
 ### 7. 如何处理模型输出被截断？
 
@@ -350,9 +350,33 @@ Job 是把耗时的 Agent/GIS 操作放到后台任务中，让 HTTP 立即返�
 
 统一采用八件套：讲清原理和调用链；指出真实源码；保留需要学习者操作的实践点；覆盖正常与失败测试；运行控制变量或真实模型实验；记录质量、token、延迟和成本；追加组件文档与项目化面试回答；最后只把已验证事实写进简历。产品功能数量不再是完成标准。
 
+### 81. Prompt 对照实验如何保证控制变量？
+
+`run_prompt_experiment` 对每个 `PromptSpec` 重建 Agent Runner 和独立临时 PlanStore，但共用同一模型配置、工具定义、RAG 索引、Case、最大轮数和输出预算。结果保存 Prompt 版本、字符数与 SHA-256，避免“名字相同但内容已变”。局限是 V1 没有固定 provider-side 采样种子，也只运行一次，下轮需重复运行报告方差。
+
+### 82. Few-shot 指标更好，为什么不立即替换默认 Prompt？
+
+当次 6-Case 实验中 Few-shot 成功率为 0.50，禁用工具违规为 0，步骤效率为 0.7944，但总 Token 为 77,556，比 structured 多约 6.5%。更重要的是每组只运行一次，三组还有共同的重复检索与计划修正问题。因此它是值得复测的候选，不是已证实的稳定升级。
+
+### 83. Tool Argument Schema Valid 都是 100%，为什么计划仍然失败？
+
+Schema 只证明 JSON 能解析、类型和必填字段正确；它不证明 GIS 数据血缘、CRS 顺序、空间连接参数或验证步骤正确。GeoPilot 的详细 Prompt 在计划 Case 中出现过 Schema 合法但被 `planning/validator.py` 拒绝的调用，随后模型自我修正。所以要分开统计参数合法率、工具执行成功率和任务成功率。
+
+### 84. 为什么 minimal 总 Token 更少，估算费用反而可能更高？
+
+计费不是简单的 total tokens 乘以一个价格。DeepSeek 对 cache-hit input、cache-miss input 和 output 使用不同单价。minimal 虽然输入少，但因计划多次失败产生 13,009 个 output tokens，高于 structured 的 9,167；按当时官方高峰单价估算约 0.02224 对 0.01791 美元。这说明更短的 Prompt 不必然更便宜，因为它可能增加错误与重试。
+
+### 85. 模型返回损坏的 Function Calling JSON 时，评测器怎么处理？
+
+适配器先抛出 `ModelResponseError`，不把残缺参数送给 Tool Registry。`evaluate_agent` 会把这一个 Case 记为 runtime failure，并将一次未解析的调用尝试计入 `tool_argument_valid_rate`，而不中止其他 Case 和 Prompt variant。自动化测试覆盖了这条失败路径。
+
+### 86. 为什么新建 `agent/prompting/`，不继续把字符串都堆在 `prompts.py`？
+
+`prompting/templates.py` 保存具体文本，`models.py` 定义 variant 与版本契约，`catalog.py` 负责稳定选择和实验顺序。这样 Agent Runner 只依赖选定后的文本，评测器可以枚举候选，业务工具与 Prompt 实验不互相污染。这次已将旧的外层 `agent/prompts.py` 移入该目录，避免两个 Prompt 入口。
+
 ## 十二、简历描述草案
 
-实现自然语言驱动的 GeoPilot GIS Agent：设计 Provider-neutral LLM 适配、Pydantic Function Calling、结构化规划与人工审批，使用确定性 GeoPandas Workflow 完成 13 步覆盖分析并支持失败检查点恢复；构建本地引用型 RAG，采用 BGE 中文 Embedding、token 截断护栏及 BM25 + Dense + RRF，在 20 条困难 Query 上取得 Recall@3/MRR/NDCG@3 0.975/0.975/0.9521，并通过实验否决默认启用高延迟 Rerank；实现用户确认型长期记忆、脱敏 Trace、workspace 隔离的 FastAPI，以及展示工具证据、审批、检查点和 GeoJSON 的 Web GIS；建立结果/过程/安全三维 Agent 回归集，真实 DeepSeek V1 的 Task Success/Required Tool Recall/Error Recovery 为 0.75/1.0/1.0，并保留冗余检索失败案例。
+实现自然语言驱动的 GeoPilot GIS Agent：设计 Provider-neutral LLM 适配、Pydantic Function Calling、结构化规划与人工审批，使用确定性 GeoPandas Workflow 完成 13 步覆盖分析并支持失败检查点恢复；构建本地引用型 RAG，采用 BGE 中文 Embedding、token 截断护栏及 BM25 + Dense + RRF，在 20 条困难 Query 上取得 Recall@3/MRR/NDCG@3 0.975/0.975/0.9521，并通过实验否决默认启用高延迟 Rerank；实现用户确认型长期记忆、脱敏 Trace、workspace 隔离的 FastAPI 和 Web GIS；建立结果/过程/安全三维 Agent 回归集，并用 6 条任务对照 minimal/structured/few-shot Prompt，真实 DeepSeek 中 Few-shot 将禁用工具违规降为 0、步骤效率提升到 0.7944，但因小样本与 Token 增长未盲目切换默认版。
 
 ## 迭代记录
 
@@ -426,3 +450,11 @@ Job 是把耗时的 Agent/GIS 操作放到后台任务中，让 HTTP 立即返�
 - 后续顺序改为 Prompt/结构化输出、Function Calling/工具、Agent 模式、RAG/Context、MCP、Guardrail/Memory/Eval；产品部署降为支线。
 - 新增 `docs/KAMA_AGENT_GUIDE.md`，每个专栏主题同时给出项目源码、缺口、实验方案、面试回答和学习者实践点。
 - 下一阶段明确为 Prompt 与结构化输出实验 V1，不再默认继续 Web 产品工程。
+
+### 2026-09-04：Prompt 与结构化输出实验 V1
+
+- 新增 Prompt 控制变量、Few-shot 上线判断、Schema/语义校验分层、Token 计费、损坏 Tool JSON 与 prompting 目录职责 6 道项目化问答。
+- 回答使用真实 `deepseek-v4-flash` 实验：6 条 Case、3 组 Prompt，Few-shot 的 Task Success/Forbidden Violation/Step Efficiency 为 0.50/0/0.7944，总 Token 77,556。
+- 保留 structured 0.8.0 为默认，因为候选提升只来自一次小样本实验，不把随机结果包装成稳定收益。
+- 全项目 194 项自动化测试、Ruff、格式和 Pyright 通过；实验报告为 `docs/evaluations/PROMPT_EXPERIMENT_V1.md`。
+- 下一阶段问答聚焦 Function Calling 的完整消息流、工具粒度、Schema 设计、权限标签和动态最小工具集。

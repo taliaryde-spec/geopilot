@@ -7,7 +7,14 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel
 
-from geopilot.agent.models import AgentMessage, ModelResponse, ToolCall, ToolDefinition
+from geopilot.agent.client import ModelResponseError
+from geopilot.agent.models import (
+    AgentMessage,
+    ModelResponse,
+    ModelUsage,
+    ToolCall,
+    ToolDefinition,
+)
 from geopilot.agent.registry import AgentTool, ToolRegistry
 from geopilot.agent.runner import AgentRunner
 from geopilot.evaluation import (
@@ -90,9 +97,13 @@ def test_evaluator_scores_completed_and_correct_failure_cases() -> None:
                         name="lookup",
                         arguments={"query": "EPSG"},
                     )
-                ]
+                ],
+                usage=ModelUsage(input_tokens=10, output_tokens=2, total_tokens=12),
             ),
-            ModelResponse(content="检查完成，结果包含 EPSG:4326。"),
+            ModelResponse(
+                content="检查完成，结果包含 EPSG:4326。",
+                usage=ModelUsage(input_tokens=10, output_tokens=2, total_tokens=12),
+            ),
             ModelResponse(
                 tool_calls=[
                     ToolCall(
@@ -100,9 +111,13 @@ def test_evaluator_scores_completed_and_correct_failure_cases() -> None:
                         name="failing_lookup",
                         arguments={"query": "missing"},
                     )
-                ]
+                ],
+                usage=ModelUsage(input_tokens=10, output_tokens=2, total_tokens=12),
             ),
-            ModelResponse(content="数据不可用，因此无法继续。"),
+            ModelResponse(
+                content="数据不可用，因此无法继续。",
+                usage=ModelUsage(input_tokens=10, output_tokens=2, total_tokens=12),
+            ),
         ]
     )
     cases = [
@@ -140,6 +155,10 @@ def test_evaluator_scores_completed_and_correct_failure_cases() -> None:
     assert result.mean_required_tool_recall == 1.0
     assert result.tool_call_success_rate == 0.5
     assert result.mean_step_efficiency == 1.0
+    assert result.usage_coverage_rate == 1.0
+    assert result.total_input_tokens == 40
+    assert result.total_output_tokens == 8
+    assert result.total_tokens == 48
     assert [case.observed_outcome for case in result.cases] == [
         ObservedTaskOutcome.COMPLETED,
         ObservedTaskOutcome.CORRECT_FAILURE,
@@ -288,3 +307,30 @@ def test_correct_failure_case_requires_expected_error_code() -> None:
             prompt="检查失败",
             expected_outcome=ExpectedTaskOutcome.CORRECT_FAILURE,
         )
+
+
+def test_evaluator_records_invalid_provider_tool_json_as_case_failure() -> None:
+    class InvalidToolJsonModel:
+        def complete(self, messages: object, tools: object) -> ModelResponse:
+            del messages, tools
+            raise ModelResponseError("Tool arguments are invalid JSON.")
+
+    evaluation_case = AgentEvaluationCase(
+        case_id="invalid_tool_json",
+        prompt="生成计划",
+        required_tools=["lookup"],
+        max_model_turns=1,
+        max_tool_calls=1,
+    )
+
+    result = evaluate_agent(
+        AgentRunner(InvalidToolJsonModel(), _registry()),
+        [evaluation_case],
+        provider="test",
+        model_name="invalid-json",
+    )
+
+    assert result.task_success_rate == 0.0
+    assert result.tool_argument_valid_rate == 0.0
+    assert result.cases[0].invalid_tool_argument_count == 1
+    assert result.cases[0].runtime_error == "Tool arguments are invalid JSON."

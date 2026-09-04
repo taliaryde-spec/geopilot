@@ -2,7 +2,7 @@
 
 GeoPilot 是一个自然语言驱动的地理空间分析 Agent。用户提供空间数据和分析问题，Agent 将检查数据、规划分析步骤、调用 GIS 工具、验证结果，并生成地图与报告。
 
-> 当前项目处于 v0.1 开发阶段。本仓库已经跑通自然语言规划、人工审批、确定性 GIS 执行、结果验证与报告，并加入了带引用的本地 RAG、中文 Embedding、长期记忆、完整 Agent 规则评测、脱敏运行 Trace、workspace 隔离的本地 FastAPI 和 Web GIS。
+> 当前项目处于 v0.1 开发阶段。本仓库已经跑通自然语言规划、人工审批、确定性 GIS 执行、结果验证与报告，并加入了带引用的本地 RAG、中文 Embedding、长期记忆、Agent 规则评测、版本化 Prompt 对照实验、脱敏运行 Trace、workspace 隔离的本地 FastAPI 和 Web GIS。
 
 ## 演示场景
 
@@ -27,6 +27,7 @@ GeoPilot 是一个自然语言驱动的地理空间分析 Agent。用户提供�
 - RAG 的章节级 Precision/Recall/MRR/NDCG 离线评估及 Agent `search_knowledge` 工具
 - 用户确认的长期偏好/目标/项目背景，支持 namespace、revision、过期、删除和按 Query 注入
 - 版本化 Agent 金标准任务、正确失败/工具/步骤/安全指标和真实 DeepSeek 回归
+- 三组 System Prompt 版本、6 类任务、Token/Cache/Reasoning 用量与工具参数合法率的控制变量实验
 - 默认脱敏 JSONL Trace，只保存 Prompt 哈希、工具元数据、耗时、轮数和终态
 - Dataset、Agent、Plan、Run、Trace 的本地 FastAPI/OpenAPI，包含路径越界和状态冲突防护
 - 数据预检、工具证据、计划审批、执行检查点和 GeoJSON 地图组成的响应式 Web GIS
@@ -129,6 +130,16 @@ uv run geopilot agent "你的任务" --max-output-tokens 4096
 ```
 
 当供应商返回 `finish_reason=length` 时，GeoPilot 会明确报告响应可能被截断，不会把残缺的工具参数交给 GIS 工具执行。
+
+对同一模型、工具和 6 条任务比较 `minimal`、`structured` 与 `structured_few_shot` 三组 Prompt：
+
+```powershell
+uv run geopilot prompt-experiment evals/prompt_cases_v1.json `
+  --max-output-tokens 8192 `
+  --output artifacts/evaluations/prompt_experiment_v1.json
+```
+
+真实 DeepSeek V1 中 Few-shot 的 Task Success 为 0.50，高于另两组的 0.3333，且禁用工具违规降为 0；但总 Token 比当前 structured 默认版高约 6.5%，样本仅 6 条且只运行一次，因此暂不切换默认 Prompt。完整结果与失败复盘见 [Prompt 对照实验 V1](docs/evaluations/PROMPT_EXPERIMENT_V1.md)。
 
 请求距离、缓冲区或面积分析时，Agent 必须调用 `recommend_metric_crs`，不能自行猜测 UTM 分区或 EPSG 编号：
 

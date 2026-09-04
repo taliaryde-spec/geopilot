@@ -4,9 +4,10 @@ from geopilot.agent.client import ChatModel
 from geopilot.agent.models import (
     AgentMessage,
     AgentRunResult,
+    ModelUsage,
     ToolResult,
 )
-from geopilot.agent.prompts import GEOPILOT_SYSTEM_PROMPT
+from geopilot.agent.prompting import DEFAULT_PROMPT_VARIANT, get_prompt_spec
 from geopilot.agent.registry import ToolRegistry
 
 
@@ -24,11 +25,15 @@ class AgentMaxTurnsError(RuntimeError):
         messages: list[AgentMessage],
         tool_results: list[ToolResult],
         model_turns: int,
+        usage: ModelUsage | None = None,
+        usage_reported_turns: int = 0,
     ) -> None:
         """Preserve a safe partial trace for diagnosing Agent loops."""
         self.messages = messages
         self.tool_results = tool_results
         self.model_turns = model_turns
+        self.usage = usage
+        self.usage_reported_turns = usage_reported_turns
         super().__init__(message)
 
 
@@ -40,14 +45,18 @@ class AgentRunner:
         model: ChatModel,
         tools: ToolRegistry,
         *,
-        system_prompt: str = GEOPILOT_SYSTEM_PROMPT,
+        system_prompt: str | None = None,
         max_model_turns: int = 6,
     ) -> None:
         if max_model_turns < 1:
             raise ValueError("max_model_turns must be at least 1")
         self._model = model
         self._tools = tools
-        self._system_prompt = system_prompt
+        self._system_prompt = (
+            system_prompt
+            if system_prompt is not None
+            else get_prompt_spec(DEFAULT_PROMPT_VARIANT).system_prompt
+        )
         self._max_model_turns = max_model_turns
 
     def run(
@@ -71,9 +80,14 @@ class AgentRunner:
         ]
         tool_results: list[ToolResult] = []
         tool_definitions = self._tools.definitions()
+        usage: ModelUsage | None = None
+        usage_reported_turns = 0
 
         for model_turn in range(1, self._max_model_turns + 1):
             response = self._model.complete(messages, tool_definitions)
+            if response.usage is not None:
+                usage = response.usage if usage is None else usage.plus(response.usage)
+                usage_reported_turns += 1
             messages.append(
                 AgentMessage(
                     role="assistant",
@@ -102,6 +116,8 @@ class AgentRunner:
                     messages=messages,
                     tool_results=tool_results,
                     model_turns=model_turn,
+                    usage=usage,
+                    usage_reported_turns=usage_reported_turns,
                 )
 
             raise AgentProtocolError(
@@ -113,4 +129,6 @@ class AgentRunner:
             messages=messages,
             tool_results=tool_results,
             model_turns=self._max_model_turns,
+            usage=usage,
+            usage_reported_turns=usage_reported_turns,
         )

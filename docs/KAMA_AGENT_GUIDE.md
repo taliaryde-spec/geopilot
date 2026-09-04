@@ -36,7 +36,7 @@
 ```
 
 - 模型：`src/geopilot/agent/client.py`、`factory.py`、`chat_completions.py`、`openai_responses.py`
-- Prompt：`src/geopilot/agent/prompts.py`
+- Prompt：`src/geopilot/agent/prompting/`
 - 动态循环：`src/geopilot/agent/runner.py`
 - 工具与执行：`src/geopilot/agent/registry.py`、`tool_adapters.py`
 - 状态：`src/geopilot/planning/`、`src/geopilot/execution/`
@@ -68,7 +68,8 @@ Agent 专项路线把 Prompt、稳定模型调用、JSON Schema 和 Function Cal
 
 ### GeoPilot 怎么实现
 
-- `prompts.py` 保存显式版本 `0.8.0`，规定先检查证据、距离分析先调用 CRS 工具、写操作先提交计划、Memory 不得覆盖系统规则等。
+- `agent/prompting/templates.py` 保存显式版本 `0.8.0`，规定先检查证据、距离分析先调用 CRS 工具、写操作先提交计划、Memory 不得覆盖系统规则等。
+- `agent/prompting/` 将最小基线、当前详细规则和 Few-shot 候选建模为带版本的 `PromptSpec`，默认仍是 structured 0.8.0。
 - `ModelSettings.from_environment` 将 provider、模型、密钥、超时与最大输出 token 从业务逻辑中隔离。
 - DeepSeek/OpenRouter 使用 OpenAI-compatible Chat Completions；OpenAI 使用 Responses API；统一转换成 `ModelResponse`。
 - Tool 参数和 Plan 使用 Pydantic；模型只要参数不能通过 Schema，Registry 就不会执行工具。
@@ -76,18 +77,18 @@ Agent 专项路线把 Prompt、稳定模型调用、JSON Schema 和 Function Cal
 
 ### 当前不足
 
-- Prompt 虽经过多次功能迭代，但没有独立、版本化的 Prompt 控制变量实验。
-- 没有量化基础 Prompt、结构化分节和 Few-shot 对 Schema 成功率、工具选择、token 与延迟的影响。
-- 供应商 usage 还未进入 Trace；不能回答每种 Prompt 的真实成本。
+- V1 只有 6 条 Case，每个 Prompt 只运行一次，还没有多次重复的均值、方差和置信区间。
+- Provider usage 已进入 Prompt Eval，但还没进入普通运行 Trace 和长期成本看板。
+- 现有规则容易让模型对某些任务多调一次 RAG；需要通过动态工具集和决策边界继续优化。
 - 目前没有刻意要求输出隐藏 CoT；这符合应用系统不依赖暴露思维链的安全取向，但要补“可观察决策摘要”的设计。
 
-### 下一步实验：Prompt Evaluation V1
+### 已完成实验：Prompt Evaluation V1
 
 固定模型、温度、工具、数据和任务集，仅改变 Prompt：
 
 1. `minimal`：只给角色和目标；
 2. `structured`：背景、任务、规则、工具策略、输出格式分节；
-3. `structured_few_shot`：在结构化版上加入 1～2 个边界示例。
+3. `structured_few_shot`：在结构化版上加入 4 个简短决策边界示例。
 
 至少覆盖数据检查、CRS、RAG、计划、缺失文件、无关任务六类 Case，记录：
 
@@ -98,19 +99,27 @@ Agent 专项路线把 Prompt、稳定模型调用、JSON Schema 和 Function Cal
 - input/output token、延迟与估算成本；
 - Prompt Injection 或越权违规数。
 
-只有指标提升超过 token/延迟成本，才升级默认 Prompt。不要因为 Few-shot 看起来更专业就默认加入。
+真实 `deepseek-v4-flash` 结果为：
+
+| Variant | Task Success | Forbidden Violation | Step Efficiency | Total Tokens |
+|---|---:|---:|---:|---:|
+| minimal | 0.3333 | 0.1667 | 0.5278 | 65,798 |
+| structured | 0.3333 | 0.1667 | 0.6278 | 72,812 |
+| structured_few_shot | **0.5000** | **0** | **0.7944** | 77,556 |
+
+Few-shot 表现最好，但仅 6 条×一次，总 Token 比 structured 高约 6.5%，因此保留 structured 为默认。三组 Required Tool Recall 和 Tool Argument Schema Valid 都为 1.0，但仍有重复检索和计划语义拒绝，说明工具召回与 Schema 合法不能代替过程效率和领域正确性。完整证据见 `docs/evaluations/PROMPT_EXPERIMENT_V1.md`。
 
 ### 面试问答
 
 **问：Prompt 怎么设计和优化？**
 
-答：GeoPilot 将 Prompt 版本化，按角色、GIS 安全边界、工具策略、计划审批和 Memory 信任边界组织。关键规则同时在 Pydantic、计划语义校验器和执行器中实现，因为 Prompt 只能降低概率，不能提供权限保证。优化时固定模型和任务集，对比 Prompt 版本的 Schema 有效率、工具选择率、任务成功率、token 和延迟，而不是凭回答观感修改。
+答：GeoPilot 将 Prompt 版本化为 minimal/structured/few-shot 三组，固定 DeepSeek、工具、RAG 索引和 6 条任务评测。Few-shot 成功率从 0.3333 提升到 0.50，违规率降为 0，但 Token 增长 6.5%且样本太小，所以没有升级默认。关键规则同时由 Pydantic、语义校验器和状态机保证，因为 Prompt 只是软约束。
 
 **问：为什么不用模型直接输出一大段 JSON？**
 
 答：JSON 文本不等于可靠契约。GeoPilot 让模型通过 Function Calling 提交参数，再由 Pydantic 做类型、必填项和模式校验，计划还经过领域语义校验。格式正确但 CRS 顺序错误的计划一样会被拒绝。
 
-**你需要亲手做：**下一阶段和我一起阅读 Prompt 0.8.0、编写六类 Case、运行三组 Prompt 对照，并解释一次失败 Trace。
+**你需要亲手做：**打开 `evals/prompt_cases_v1.json` 和 `PROMPT_EXPERIMENT_V1.md`，选一个失败 Case，用“预期工具 → 实际工具 → 预算超限点 → 改进假设”四句话复述；然后亲手重跑一次命令，观察模型随机性。
 
 ## 三、Context Engineering
 
@@ -464,7 +473,7 @@ MCP V1 只发布两个只读工具：
 
 ## 十四、后续执行顺序与每阶段交付物
 
-### 阶段 A：Prompt 与结构化输出实验 V1（下一步）
+### 阶段 A：Prompt 与结构化输出实验 V1（已完成）
 
 - 讲解 Prompt 0.8.0 每个区块；
 - 建立三组 Prompt variant 和六类 Case；
@@ -472,7 +481,7 @@ MCP V1 只发布两个只读工具：
 - 运行 mock 回归与小规模真实 DeepSeek 对照；
 - 输出实验报告，更新双文档和面试回答。
 
-### 阶段 B：Function Calling 与 Tool Design V1
+### 阶段 B：Function Calling 与 Tool Design V1（下一步）
 
 - 逐工具审计名称、描述、Schema、错误和返回 token；
 - 加动态最小工具集；

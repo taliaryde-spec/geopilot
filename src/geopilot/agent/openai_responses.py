@@ -29,6 +29,7 @@ from geopilot.agent.config import ModelConfigurationError, ModelSettings
 from geopilot.agent.models import (
     AgentMessage,
     ModelResponse,
+    ModelUsage,
     ToolCall,
     ToolDefinition,
 )
@@ -223,4 +224,24 @@ def _normalize_response(response: Any) -> ModelResponse:
         )
 
     content = response.output_text.strip() or None
-    return ModelResponse(content=content, tool_calls=tool_calls)
+    return ModelResponse(
+        content=content,
+        tool_calls=tool_calls,
+        usage=_normalize_usage(response),
+    )
+
+
+def _normalize_usage(response: Any) -> ModelUsage | None:
+    """Normalize optional Responses API token details."""
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    input_details = getattr(usage, "input_tokens_details", None)
+    output_details = getattr(usage, "output_tokens_details", None)
+    return ModelUsage(
+        input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
+        output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+        total_tokens=int(getattr(usage, "total_tokens", 0) or 0),
+        cached_input_tokens=int(getattr(input_details, "cached_tokens", 0) or 0),
+        reasoning_tokens=int(getattr(output_details, "reasoning_tokens", 0) or 0),
+    )
