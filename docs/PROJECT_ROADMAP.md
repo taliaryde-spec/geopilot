@@ -51,3 +51,19 @@ Evaluation / Tracing / Storage / Deployment / MCP
 - RAG 用于检索知识与规范，不代替空间数据计算。
 - Memory 必须区分当前任务状态与跨会话长期信息。
 - 每个阶段都必须包含测试、文档、可观测性和明确验收标准。
+
+## 2026-09-04 后续优先级纠偏
+
+项目的首要目标是让开发者完整掌握大模型应用与 Agent 组件，并形成能用于简历和面试的代码、实验和回答；Web 页面只是展示入口。因此后续不以 Job/SSE、页面功能或部署数量作为主线。
+
+新的核心顺序是：
+
+1. Prompt、模型调用与结构化输出控制变量实验；
+2. Function Calling 与工具设计优化；
+3. ReAct、Plan-and-Execute、Reflection 的同题对比；
+4. RAG 生成质量与 Context Engineering；
+5. 只读 GIS MCP Server 与独立 Client 验证；
+6. Guardrails、Memory 与 Agent Eval 扩展；
+7. 最后再恢复 Job/SSE、认证、数据库、容器和部署支线。
+
+每个组件必须完成：原理讲解、源码定位、亲手实践点、正常/失败测试、真实模型或可复现实验、指标与取舍、双文档更新、面试问答和诚实简历表述。已有组件不能因为“代码已经写过”就跳过这套学习闭环。

@@ -4,6 +4,26 @@ GeoPilot 后续大模型部分以[卡码大模型学习路线](https://notes.kam
 
 所有组件的实现与迭代统一追加到 [Agent 组件与工程实现记录](AGENT_COMPONENTS.md)，所有项目化面试回答统一追加到 [Agent 面试问题与项目化回答](AGENT_INTERVIEW_QA.md)。
 
+## 主线纠偏：学习 Agent 组件，而不是继续堆产品功能
+
+2026-09-04 起，GeoPilot 的优先级从“继续扩展页面和部署能力”调整为“系统掌握 Agent 组件”。FastAPI 与 Web GIS 保留为可演示入口，但后台 Job、SSE、认证和部署暂时降为支线。原因是本项目首先服务于学习、简历和面试：必须能解释 Prompt、Function Calling、Agent 模式、RAG、Context、Memory、Guardrail、Eval 与 MCP 如何实现和优化，而不只是展示一个能运行的页面。
+
+主线参考卡码的 Agent 六步路线，并根据 GeoPilot 已有代码采用“已有能力补实验、缺失能力再实现”的方式：
+
+| 顺序 | 学习组件 | GeoPilot 当前基础 | 下一次实践与实验 | 必须形成的面试证据 |
+|---|---|---|---|---|
+| 1 | Prompt、模型调用、结构化输出 | Prompt 0.8.0、Pydantic Schema、三类模型适配已存在 | 建立 Prompt Case；对比基础版、结构化规则版和少量示例版；统计 Schema 成功率、工具选择率、任务成功率、token、延迟 | Prompt 的组成；Few-shot 何时有效；Prompt 软约束与代码硬约束；截断、重试、温度和输出预算 |
+| 2 | Function Calling 与工具设计 | Agent Loop、Tool Registry、GIS/RAG/Plan 工具已存在 | 审计工具粒度、名称、描述、参数和返回值；比较全量工具与按任务最小工具集 | 一次 Function Calling 完整消息流；参数 Schema；工具错误；为什么工具也是权限边界 |
+| 3 | Agent 模式 | 当前 Loop 属于工具调用型 ReAct，另有 Plan-and-Execute Workflow | 用同一 GIS 任务比较直接工具调用、Plan-and-Execute、带一次验证的 Reflection；不要求模型输出隐藏思维链 | 三种模式的适用场景、成本、延迟、失败模式；为什么 GeoPilot 采用 Agent + Workflow |
+| 4 | RAG 与 Agentic RAG | Chunking、BGE Embedding、Dense/BM25/RRF、可选 Rerank 和检索评测已存在 | 补 Query 改写/拒答/Context 压缩对照；增加答案 Faithfulness、Citation Precision 与无答案集 | Chunk/Embedding/向量库/Hybrid/Rerank；召回问题与生成问题如何定位 |
+| 5 | Context Engineering | Prompt、RAG、Memory、工具结果已分层，但没有统一 token budget | 实现上下文清单、token 估算、动态工具集、工具结果摘要/清理；比较质量、步骤与成本 | Prompt Engineering 与 Context Engineering；检索、筛选、排序、压缩、组装 |
+| 6 | 工具协议 MCP | 尚未实现，已有稳定 Pydantic 工具和 workspace policy | 发布只读 `inspect_dataset`、`recommend_metric_crs` MCP Server；用独立 Client 做契约、权限和互操作测试 | Host/Client/Server；tools/resources/prompts；MCP 与 Function Calling 的区别 |
+| 7 | Guardrails 与故障兜底 | 最大轮数、路径隔离、计划校验、人工审批、正确失败已有 | 增加死循环、误调用、Prompt Injection、工具超时、计划篡改和高风险 Case | 防御分层；可恢复/不可恢复错误；Human-in-the-loop 不是万能安全措施 |
+| 8 | Memory 与 Eval | 四层状态边界、确认型长期记忆、规则 Eval 和脱敏 Trace 已存在 | 扩大黄金集；增加记忆冲突/污染评测、独立生成 Judge、token/成本和版本对照 | Memory/RAG/Session 区别；结果/过程/安全评测；LLM Judge 的偏差 |
+| 9 | 产品部署支线 | FastAPI + Web GIS V1 已完成 | 等核心组件补齐后再做 Job/SSE、数据库、认证、Docker 和 CI/CD | 能说明同步/异步、TTFT/TPOT/吞吐，但不抢占 Agent 学习主线 |
+
+下一阶段固定为“Prompt 与结构化输出实验 V1”，而不是 Job + SSE。每个阶段都按“先讲原理 → 指出现有源码 → 编写或修改代码 → 跑控制变量实验 → 分析失败 → 更新双文档 → 形成简历/面试表述”推进。
+
 ## 每一步的完成标准
 
 从本阶段开始，一个大模型组件只有同时具备以下内容，才算完成一次可用于简历的迭代：

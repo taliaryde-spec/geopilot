@@ -34,6 +34,8 @@ GeoPilot 是一个自然语言驱动的地理空间分析 Agent。用户提供�
 
 完整组件规划与各阶段验收标准见 [GeoPilot 项目路线图](docs/PROJECT_ROADMAP.md)。
 
+按照卡码 Agent 专栏逐项整理的“知识原理 → GeoPilot 源码 → 当前缺口 → 优化实验 → 项目化面试回答”见 [卡码 Agent 知识与 GeoPilot 实现对照手册](docs/KAMA_AGENT_GUIDE.md)。
+
 ## 快速开始
 
 项目使用 Python 3.13 和 uv 管理依赖与虚拟环境。
@@ -160,7 +162,7 @@ uv run geopilot approve plan_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 uv run geopilot reject plan_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx --reason "需要先确认服务半径字段的单位"
 ```
 
-批准只改变计划检查点的状态，不会提前执行空间分析。下一阶段的重投影、缓冲区和空间连接工具将使用 `plan_id` 检查授权状态。
+批准只改变计划检查点的状态，不会提前执行空间分析。当前执行器会使用 `plan_id` 检查授权状态，再运行重投影、缓冲区、空间连接等确定性工具。
 
 计划提交前还会经过代码级语义校验，而不只依赖 Prompt：
 

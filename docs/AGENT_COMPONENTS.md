@@ -160,7 +160,7 @@ V1 只适合绑定 `127.0.0.1`：没有认证、RBAC、租户隔离、限流、T
 
 产物路由使用 `run_id + output` 定位已登记成功步骤，再验证规范化路径位于对应 Run 目录，只允许 `.geojson` 和 `.md`。模型回答、错误和数据属性用 DOM `textContent` 渲染，不使用 `innerHTML`。GeoJSON 已由后端确定性转换到 `EPSG:4326`；地图不参与距离或面积计算。
 
-当前是 Web GIS V1：同步 Agent/执行会让页面等待；没有上传、多图层、浏览器 E2E、视觉回归、CSP、认证或大 GeoJSON 优化；Leaflet 和 OpenStreetMap 底图依赖网络。证据和下一步指标见 `docs/evaluations/WEB_GIS_V1.md`。
+当前是 Web GIS V1：同步 Agent/执行会让页面等待；没有上传、多图层、浏览器 E2E、视觉回归、CSP、认证或大 GeoJSON 优化；Leaflet 和 OpenStreetMap 底图依赖网络。证据见 `docs/evaluations/WEB_GIS_V1.md`。这些产品优化保留在支线，不再抢占 Agent 组件学习主线。
 
 ## RAG、Embedding 在哪里
 
@@ -190,10 +190,13 @@ GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和�
 
 ## 后续完整组件顺序
 
-1. 扩充 Agent 回归集，增加生成答案 Judge、供应商 token/成本统计和 Trace 聚合告警。
-2. 后台 Job/SSE、数据库、上传安全、认证和权限边界（FastAPI 与 Web GIS 本地 V1 已完成）。
-3. Docker、CI/CD、安全检查和部署。
-4. MCP Server，将稳定 GIS 能力提供给外部 Agent。
+1. Prompt 与结构化输出控制变量实验，补齐 Prompt/Few-shot/Schema/token/延迟的实现与选型证据。
+2. Function Calling、工具 Schema 和动态最小工具集实验。
+3. 同题对比 ReAct、Plan-and-Execute 与 Reflection，明确模式边界。
+4. RAG 生成侧评测与 Context Engineering：拒答、引用、token budget、筛选和压缩。
+5. 发布只读 MCP Server，用独立 Client 验证协议、Schema 和 workspace 权限。
+6. 扩展 Guardrails、Memory 与 Agent Eval，包括污染、高风险和生成 Judge。
+7. 最后再进入后台 Job/SSE、数据库、认证、Docker、CI/CD 和部署。
 
 这套顺序先保证 Agent 会正确计算和失败，再增加知识、记忆与产品界面，便于定位每个阶段的问题并形成可展示的工程提交历史。
 
@@ -322,5 +325,15 @@ GeoPilot 的 RAG 用于检索 CRS 说明、空间分析规范、字段定义和�
 - 测试：API/Web 集成测试增至 10 项，覆盖静态资源、结构化 Plan ID、GeoJSON 媒体类型和 GeoPackage 拒绝；JavaScript 通过 `node --check`。
 - 全量回归：全项目 186 项测试通过，Ruff、格式和 Pyright 均为 0 错误。
 - 打包验证：`uv build` 成功生成 sdist/wheel，wheel 内容包含 Web HTML/CSS/JS；构建缓存与 `dist` 验证产物随后清理。
-- 局限：同步请求、无上传/认证/浏览器 E2E/多图层/大数据优化，外部 Leaflet 与底图依赖网络；下一步为 Job + SSE 和 Playwright 核心路径。
+- 局限：同步请求、无上传/认证/浏览器 E2E/多图层/大数据优化，外部 Leaflet 与底图依赖网络；这些进入产品支线，下一主线改为 Prompt 与结构化输出实验。
 - 证据：`docs/evaluations/WEB_GIS_V1.md`。
+
+### 2026-09-04：Agent 学习主线纠偏
+
+- 原因：此前把 Web 产品工程自然延伸成 Job + SSE，偏离“逐个掌握 Prompt、RAG、MCP 等 Agent 组件并准备面试”的项目首要目标。
+- 外部路线核对：卡码 Agent 专项顺序为 Prompt/结构化输出与 Function Calling、Agent 认知、设计模式、工具与 MCP、故障兜底、Memory 与 Eval；GeoPilot 后续以此为主线。
+- 新顺序：Prompt 实验 → Function Calling/Tool 实验 → ReAct/Plan-and-Execute/Reflection 对照 → RAG 生成评测与 Context Engineering → 只读 MCP → Guardrail/Memory/Eval 扩展。
+- 产品支线：FastAPI/Web GIS 保留为演示证据；Job/SSE、认证和部署延后，不删除已完成代码。
+- 学习闭环：每个组件必须同时交付原理、源码、实践、测试、实验指标、失败复盘、双文档、面试回答和简历边界。
+- 总手册：新增 `docs/KAMA_AGENT_GUIDE.md`，逐项映射卡码的 Prompt、Context、Function Calling、Agent 模式、工具、故障、RAG、Memory、Eval、DAG 和 MCP 到 GeoPilot 真实实现与优化实验。
+- 下一步：Prompt 与结构化输出实验 V1；不能因为已有 Prompt 0.8.0 就跳过对照和量化。

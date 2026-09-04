@@ -4,6 +4,8 @@
 
 这份文档回答三个求职问题：GeoPilot 到底包含哪些 Agent 组件、每个组件下一步怎么优化、面试或简历凭什么证明做过。状态以仓库代码和实验为准；“计划优化”不能写成已实现。
 
+卡码专栏逐项知识解释、GeoPilot 实现和项目化面试回答见 [卡码 Agent 知识与 GeoPilot 实现对照手册](KAMA_AGENT_GUIDE.md)；本文件继续作为精简的优化与证据矩阵。
+
 学习主线参考[卡码大模型学习路线](https://notes.kamacoder.com/llm/)，工程补充参考卡码的 [Agent vs Workflow](https://notes.kamacoder.com/llm/app/agent_vs_workflow.html)、[工具设计](https://notes.kamacoder.com/llm/app/agent_tool_design.html)、[Memory](https://notes.kamacoder.com/llm/app/agent_memory.html)、[Agent Evaluation](https://notes.kamacoder.com/llm/app/agent_evaluation.html) 与 [MCP](https://notes.kamacoder.com/llm/app/mcp_protocol.html)。近期一手资料采用 Anthropic 的 [Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents)、[Context Engineering](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents) 和 MCP 官方 [Architecture](https://modelcontextprotocol.io/docs/learn/architecture)。
 
 ## 总体设计判断
@@ -60,13 +62,16 @@ Agent Eval + redacted Trace
 
 ## 推荐的后续开发顺序
 
-1. 已完成本地 FastAPI V1 和同源 Web GIS V1，形成“预检 → Agent → 审批 → 执行 → 地图”的可演示产品。
-2. 下一步把同步长任务改成 Job + SSE：创建任务立即返回 `job_id`，页面查看步骤和取消。
-3. 接入模型 usage，Trace 增加 token、成本、Prompt/工具版本；扩展 Agent Eval Case。
-4. 增加上传安全、SQLite/Postgres、认证/RBAC、幂等和并发控制。
-5. Docker + GitHub Actions + Secret/依赖安全检查，完成本地到部署的工程闭环。
-6. 最后发布只读 MCP Server；用外部 MCP Client 验证互操作，再考虑写操作和远程传输。
-7. 只有评测证明单 Agent 无法有效处理可并行复杂 GIS 调研时，才试验 Multi-Agent。
+这里的顺序按“Agent 学习和求职证据”排列，不按产品功能数量排列：
+
+1. Prompt 与结构化输出实验：比较 Prompt 版本、Few-shot 与代码校验，记录 Schema/工具/任务成功率、token 和延迟。
+2. Function Calling 与工具设计实验：审计工具粒度、Schema、返回值和动态最小工具集。
+3. Agent 模式实验：同题比较直接 Tool Calling、ReAct、Plan-and-Execute 和一次 Reflection 验证的收益与成本。
+4. RAG 生成侧与 Context Engineering：Query 改写、拒答、上下文预算/压缩、Faithfulness 和引用评估。
+5. MCP：先发布两个只读 GIS 工具，用独立 Client 验证互操作与 workspace 权限。
+6. 扩展 Guardrail、Memory 和 Agent Eval，增加故障、污染、高风险与生成质量 Case。
+7. 核心 Agent 组件形成完整证据后，再回到 Job/SSE、数据库、认证、Docker 和 CI/CD。
+8. 只有评测证明单 Agent 无法有效处理可并行复杂 GIS 调研时，才试验 Multi-Agent。
 
 ## 简历证据包
 
